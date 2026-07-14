@@ -1,0 +1,77 @@
+# CI/CD: every push to main runs the parser tests and then deploys the
+# Worker (portal page + API) to Cloudflare via wrangler — no Cloudflare
+# git integration involved.
+#
+# Required repo secrets:
+#   CLOUDFLARE_API_TOKEN    Cloudflare API token, permission "Workers Scripts: Edit"
+#                           (add "Workers Custom Domains: Edit" + zone DNS: Edit for
+#                           the dev.cardputer.cc custom domain on first deploy)
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare account id (dashboard right sidebar)
+#
+# Optional repo secrets (when present they are synced to the Worker after
+# each deploy, so you never need to run `wrangler secret put` locally):
+#   OAUTH_CLIENT_ID         GitHub OAuth App client id      -> GITHUB_CLIENT_ID
+#   OAUTH_CLIENT_SECRET     GitHub OAuth App client secret  -> GITHUB_CLIENT_SECRET
+#   BOT_TOKEN               fine-grained PAT, contents:write on CardputerZero/packages
+#   SESSION_SECRET          e.g. `openssl rand -hex 32`
+# (GitHub forbids secret names starting with GITHUB_, hence the OAUTH_* aliases.)
+name: Deploy to Cloudflare
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install parser test dependencies
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev xz-utils zstd
+      - name: Run deb parser tests
+        run: node --test test/*.test.js
+
+  deploy:
+    # PRs only run tests; the actual deploy happens on push to main (or manual dispatch).
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+
+      - name: Sync Worker secrets (only those configured in GitHub)
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SYNC_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_CLIENT_ID }}
+          SYNC_GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_CLIENT_SECRET }}
+          SYNC_BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          SYNC_SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+        run: |
+          set -euo pipefail
+          for name in GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET BOT_TOKEN SESSION_SECRET; do
+            val="$(printenv "SYNC_$name" || true)"
+            if [ -n "$val" ]; then
+              printf '%s' "$val" | npx --yes wrangler secret put "$name"
+              echo "synced secret: $name"
+            else
+              echo "skipped secret (not set in GitHub): $name"
+            fi
+          done

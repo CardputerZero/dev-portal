@@ -13,7 +13,8 @@
 
 ```
 浏览器 dev.cardputer.cc
-  │ ① 选择 .deb → 本地解析（ar/tar/gz/xz/zstd 纯前端解包）
+  │ ① 选择 .deb → 本地解析（ar/tar 纯前端解包，支持 deb(5) 全部压缩：
+  │    gz / xz / zstd / bz2 / lzma / 无压缩，解压库全部同域 vendored）
   │    展示图标 / 包名 / 版本 / .desktop / 邮箱 / 文件清单 / 安全报告
   │    并对照线上索引预检：包名归属、版本是否重复/倒退
   │ ② GitHub OAuth 登录（scope: user:email，读取已验证邮箱）
@@ -86,7 +87,8 @@ Cloudflare Workers（不使用 Cloudflare 的 git 集成 / 自动拉取部署）
 cd worker && wrangler dev   # http://localhost:8787，页面 + API 同域
 ```
 
-解析器单元测试（用系统 gzip/xz/zstd 模拟浏览器解压）：
+解析器单元测试（zstd/bzip2/lzma 直接用页面同款 vendored 纯 JS 库解压，
+gzip 用 node:zlib，xz 用系统 xz；需要 `apt install dpkg xz-utils bzip2`）：
 
 ```bash
 node --test test/*.test.js

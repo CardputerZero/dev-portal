@@ -2,27 +2,33 @@
 
 import { parseDeb, compareDebVersions, extractEmail } from "/debparse.js";
 
-// xz-decompress (WASM) is vendored at /vendor/ and served same-origin, so there
-// is zero runtime dependency on a third-party CDN (availability, version drift,
-// supply-chain, or network reachability). It is loaded lazily and only when an
-// .xz-compressed package is actually parsed: a static top-level import would
-// abort the whole module (blanking the page) if the bundle's evaluation or
-// export shape ever failed, whereas a dynamic import keeps any such failure
-// contained to the xz code path. The bundle is a CommonJS package transformed
-// to ESM, so XzReadableStream is exposed on the default export (jsDelivr's
-// cjs->esm lexer cannot surface it as a named export); we accept both shapes.
-const XZ_URL = "/vendor/xz-decompress.js";
-let _xzPromise = null;
-function loadXz() {
-  if (!_xzPromise) {
-    _xzPromise = import(/* @vite-ignore */ XZ_URL).then(
-      (m) => m.XzReadableStream
-        || (m.default && m.default.XzReadableStream)
-        || (typeof m.default === "function" ? m.default : null),
-    );
+// All decompression libraries are vendored at /vendor/ and served same-origin,
+// so there is zero runtime dependency on a third-party CDN (availability,
+// version drift, supply-chain, or network reachability). Each one is loaded
+// lazily and only when a package actually uses that compression: a static
+// top-level import would abort the whole module (blanking the page) if a
+// bundle's evaluation or export shape ever failed, whereas a dynamic import
+// keeps any such failure contained to that one code path.
+//   xz-decompress (WASM)  — .tar.xz  (jsDelivr cjs->esm build: the class may
+//                           sit on the default export instead of a named one)
+//   fzstd (pure JS)       — .tar.zst fallback when DecompressionStream("zstd")
+//                           is unavailable (only Chrome 133+ has it natively)
+//   bz2 (pure JS)         — .tar.bz2  (legacy debs)
+//   LZMA-JS d-min (pure JS)— .tar.lzma (legacy debs, LZMA "alone" format)
+const lazyImports = new Map();
+function lazyImport(url, pickExport) {
+  if (!lazyImports.has(url)) {
+    lazyImports.set(url, import(/* @vite-ignore */ url).then(pickExport));
   }
-  return _xzPromise;
+  return lazyImports.get(url);
 }
+const loadXz = () => lazyImport("/vendor/xz-decompress.js",
+  (m) => m.XzReadableStream
+    || (m.default && m.default.XzReadableStream)
+    || (typeof m.default === "function" ? m.default : null));
+const loadFzstd = () => lazyImport("/vendor/fzstd.js", (m) => m.decompress);
+const loadBz2 = () => lazyImport("/vendor/bz2.js", (m) => m.decompress);
+const loadLzma = () => lazyImport("/vendor/lzma-d.js", (m) => m.LZMA);
 
 const INDEX_URL = "https://cardputer.cc/packages/dists/stable/main/binary-arm64/Packages";
 
@@ -49,31 +55,50 @@ async function streamToBytes(stream) {
   return out;
 }
 
+async function loadOrExplain(loader, what) {
+  let impl = null;
+  try {
+    impl = await loader();
+  } catch { /* fall through to the user-facing error below */ }
+  if (!impl) {
+    throw new Error(`无法加载 ${what} 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验`);
+  }
+  return impl;
+}
+
 const decompressors = {
   gzip: async (data) => streamToBytes(
     new Blob([data]).stream().pipeThrough(new DecompressionStream("gzip")),
   ),
   xz: async (data) => {
-    let XzReadableStream;
-    try {
-      XzReadableStream = await loadXz();
-    } catch {
-      XzReadableStream = null;
-    }
-    if (!XzReadableStream) {
-      throw new Error("无法加载 xz 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验");
-    }
+    const XzReadableStream = await loadOrExplain(loadXz, "xz");
     return streamToBytes(new XzReadableStream(new Blob([data]).stream()));
   },
   zstd: async (data) => {
-    // Chrome 133+/Edge expose zstd in DecompressionStream; fall back with a hint.
+    // Chrome 133+/Edge expose zstd in DecompressionStream natively; every
+    // other browser falls back to the vendored pure-JS fzstd decoder.
     try {
       return await streamToBytes(
         new Blob([data]).stream().pipeThrough(new DecompressionStream("zstd")),
       );
-    } catch {
-      throw new Error("此浏览器不支持 zstd 解压，无法本地预览。建议用 dpkg-deb -Zxz 重新打包，或换 Chrome 133+ 浏览器");
-    }
+    } catch { /* native zstd unavailable (or stream failed) — use fzstd */ }
+    const fzstdDecompress = await loadOrExplain(loadFzstd, "zstd");
+    return fzstdDecompress(data);
+  },
+  bzip2: async (data) => {
+    const bz2Decompress = await loadOrExplain(loadBz2, "bzip2");
+    return bz2Decompress(data);
+  },
+  lzma: async (data) => {
+    const LZMA = await loadOrExplain(loadLzma, "lzma");
+    // LZMA-JS is callback-based; the result is an array of byte values, or a
+    // string when the payload happens to decode as UTF-8 text.
+    const result = await new Promise((resolve, reject) => {
+      LZMA.decompress(data, (out, err) => (err ? reject(new Error(String(err))) : resolve(out)));
+    });
+    return typeof result === "string"
+      ? new TextEncoder().encode(result)
+      : new Uint8Array(result);
   },
 };
 
@@ -276,15 +301,38 @@ async function renderMine() {
     return;
   }
   rows.innerHTML = "";
-  for (const p of mine.sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const p of mine.sort((a, b) => a.name.localeCompare(b.name) || compareDebVersions(a.Version, b.Version))) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.name}</td><td>${p.Version}</td><td>${p.email}</td><td></td>`;
+    tr.innerHTML = `<td>${p.name}</td><td>${p.Version}</td><td>${p.email}</td><td class="row-actions"></td>`;
+    const actions = tr.lastElementChild;
+    const dl = debDownloadUrl(p);
+    if (dl) {
+      const a = document.createElement("a");
+      a.className = "dl-btn";
+      a.textContent = "下载 .deb";
+      a.href = dl;
+      // Hint the browser to save instead of navigate; the canonical
+      // pkg_version_arch.deb name also survives cross-origin redirects.
+      a.download = `${p.name}_${p.Version}_${p.Architecture || "arm64"}.deb`;
+      a.title = `${p.name} ${p.Version}（${p.Size ? (p.Size / 1048576).toFixed(1) + " MB" : "大小未知"}）`;
+      actions.appendChild(a);
+    }
     const btn = document.createElement("button");
     btn.textContent = "下架";
     btn.addEventListener("click", () => unpublish(p, btn));
-    tr.lastElementChild.appendChild(btn);
+    actions.appendChild(btn);
     rows.appendChild(tr);
   }
+}
+
+/** Resolve the .deb download URL from the APT index entry (Filename field). */
+function debDownloadUrl(entry) {
+  const filename = (entry.Filename || "").trim();
+  if (!filename) return null;
+  // Absolute URL (this repo publishes pool files on GitHub Releases) or a
+  // conventional pool path relative to the APT repository root.
+  if (/^https?:\/\//.test(filename)) return filename;
+  return new URL(filename, INDEX_URL.replace(/dists\/.*$/, "")).toString();
 }
 
 async function unpublish(p, btn) {

@@ -36,7 +36,9 @@ jobs:
         with:
           node-version: 22
       - name: Install parser test dependencies
-        run: sudo apt-get update && sudo apt-get install -y dpkg-dev xz-utils zstd
+        # zstd/bzip2/lzma are decompressed by the vendored pure-JS libs in the
+        # tests; xz-utils also provides the lzma compressor for legacy fixtures.
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev xz-utils bzip2
       - name: Run deb parser tests
         run: node --test test/*.test.js
 

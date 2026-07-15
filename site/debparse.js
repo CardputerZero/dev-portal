@@ -2,13 +2,15 @@
  * Browser-side .deb inspector for the CardputerZero developer portal.
  *
  * Parses a Debian package entirely in the browser (no upload needed):
- *   ar archive -> control.tar.{gz,xz,zst} + data.tar.{gz,xz,zst}
- * and produces control fields, the .desktop entry, the app icon bytes,
- * a full file listing and a preliminary safety report.
+ *   ar archive -> control.tar{,.gz,.xz,.zst} + data.tar{,.gz,.xz,.zst,.bz2,.lzma}
+ * (every compression the deb(5) format allows) and produces control fields,
+ * the .desktop entry, the app icon bytes, a full file listing and a
+ * preliminary safety report.
  *
- * Decompressors are injected so the same module works in the page (CDN
- * libs) and in Node tests (npm libs):
- *   parseDeb(buffer, { gzip, xz, zstd })  — each: (Uint8Array) => Promise<Uint8Array>
+ * Decompressors are injected so the same module works in the page (vendored
+ * libs) and in Node tests (system tools / the same vendored libs):
+ *   parseDeb(buffer, { gzip, xz, zstd, bzip2, lzma })
+ *     — each: (Uint8Array) => Promise<Uint8Array>
  */
 
 /* ------------------------------ ar archive ------------------------------- */
@@ -78,9 +80,11 @@ function parseTar(bytes) {
 
 /* ----------------------------- decompression ----------------------------- */
 
+// Every compression deb(5) allows for control.tar / data.tar members.
 async function extractMember(entries, base, decompressors) {
   for (const [suffix, kind] of [
-    [".tar.gz", "gzip"], [".tar.xz", "xz"], [".tar.zst", "zstd"], [".tar", "raw"],
+    [".tar.gz", "gzip"], [".tar.xz", "xz"], [".tar.zst", "zstd"],
+    [".tar.bz2", "bzip2"], [".tar.lzma", "lzma"], [".tar", "raw"],
   ]) {
     const entry = entries.find((e) => e.name === base + suffix);
     if (!entry) continue;

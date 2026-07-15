@@ -74,8 +74,14 @@
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     th { color: var(--dim); font-weight: 500; }
-    td button { background: transparent; border: 1px solid var(--danger); color: var(--danger);
-      border-radius: 5px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+    td.actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn { display: inline-block; background: transparent; border: 1px solid var(--line); color: var(--text);
+      border-radius: 5px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer;
+      text-decoration: none; line-height: 1.6; }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn-danger { border-color: var(--danger); color: var(--danger); }
+    .btn-danger:hover { border-color: var(--danger); color: #fff; background: var(--danger); }
+    .btn.disabled { opacity: .4; pointer-events: none; }
     .login-box { text-align: center; padding: 48px 20px; }
     .login-box button { width: auto; padding: 12px 40px; }
     .muted { color: var(--dim); font-size: 13px; }

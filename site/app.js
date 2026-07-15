@@ -278,18 +278,63 @@ async function renderMine() {
   rows.innerHTML = "";
   for (const p of mine.sort((a, b) => a.name.localeCompare(b.name))) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.name}</td><td>${p.Version}</td><td>${p.email}</td><td></td>`;
+    const size = p.Size ? ` · ${(Number(p.Size) / 1048576).toFixed(1)} MB` : "";
+    tr.innerHTML = `<td>${p.name}</td><td>${p.Version}${size}</td><td>${p.email}</td>`;
+
+    const actions = document.createElement("td");
+    actions.className = "actions";
+
+    // download the .deb (Filename in the index is an absolute URL)
+    const dl = document.createElement("a");
+    dl.className = "btn btn-ghost";
+    dl.textContent = "下载";
+    if (p.Filename) {
+      dl.href = p.Filename;
+      dl.setAttribute("download", "");
+      dl.target = "_blank";
+      dl.rel = "noopener";
+    } else {
+      dl.classList.add("disabled");
+      dl.title = "索引中无下载地址";
+    }
+    actions.appendChild(dl);
+
+    // copy the apt install command
+    const cp = document.createElement("button");
+    cp.className = "btn btn-ghost";
+    cp.textContent = "复制安装命令";
+    cp.addEventListener("click", () => copyInstall(p.name, cp));
+    actions.appendChild(cp);
+
+    // unpublish (auto-removes via the packages workflow)
     const btn = document.createElement("button");
+    btn.className = "btn btn-danger";
     btn.textContent = "下架";
     btn.addEventListener("click", () => unpublish(p, btn));
-    tr.lastElementChild.appendChild(btn);
+    actions.appendChild(btn);
+
+    tr.appendChild(actions);
     rows.appendChild(tr);
   }
 }
 
+async function copyInstall(pkg, btn) {
+  const cmd = `sudo apt update && sudo apt install ${pkg}`;
+  const original = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(cmd);
+    btn.textContent = "已复制 ✓";
+  } catch {
+    window.prompt("复制这条命令：", cmd);
+  }
+  setTimeout(() => { btn.textContent = original; }, 1500);
+}
+
 async function unpublish(p, btn) {
-  if (!confirm(`确认下架 ${p.name} ${p.Version}？将生成移除 PR。`)) return;
+  if (!confirm(`确认下架 ${p.name} ${p.Version}？校验归属通过后会自动移除（无需人工审核）。`)) return;
   btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = "提交中…";
   try {
     const r = await fetch("/api/unpublish", {
       method: "POST",
@@ -298,9 +343,10 @@ async function unpublish(p, btn) {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || data.error);
-    btn.textContent = "已提交";
+    btn.textContent = "已提交，自动下架中";
   } catch (err) {
     alert(`下架失败：${err.message}`);
+    btn.textContent = original;
     btn.disabled = false;
   }
 }

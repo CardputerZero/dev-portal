@@ -15,7 +15,9 @@ binding = "ASSETS"
 RETURN_PATH = "/"
 TARGET_OWNER = "CardputerZero"
 TARGET_REPO = "packages"
-BUFFER_TAG = "web-upload-buffer"
+# Unified org-controlled staging release: web uploads land in the same
+# release that czdev submissions are mirrored into (was: web-upload-buffer).
+BUFFER_TAG = "staging"
 MAX_SIZE_MB = "64"
 PACKAGES_INDEX_URL = "https://cardputer.cc/packages/dists/stable/main/binary-arm64/Packages"
 # Comma-separated GitHub logins with admin power (can update/unpublish any package).

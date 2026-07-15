@@ -402,6 +402,16 @@ function json(status, obj) {
   });
 }
 
+// Best-effort body reader for surfacing upstream (GitHub) error details.
+async function safeText(resp) {
+  try {
+    const t = await resp.text();
+    return `HTTP ${resp.status}: ${t.slice(0, 400)}`;
+  } catch {
+    return `HTTP ${resp.status}`;
+  }
+}
+
 function cookie(name, value, maxAge) {
   return `${name}=${value}; Max-Age=${maxAge}; Path=/; Secure; HttpOnly; SameSite=Lax`;
 }

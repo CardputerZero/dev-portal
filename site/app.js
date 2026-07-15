@@ -1,7 +1,28 @@
 /* CardputerZero developer portal front-end. Same-origin API (see worker/). */
 
 import { parseDeb, compareDebVersions, extractEmail } from "/debparse.js";
-import { XzReadableStream } from "https://cdn.jsdelivr.net/npm/xz-decompress@0.2.2/+esm";
+
+// xz-decompress (WASM) is vendored at /vendor/ and served same-origin, so there
+// is zero runtime dependency on a third-party CDN (availability, version drift,
+// supply-chain, or network reachability). It is loaded lazily and only when an
+// .xz-compressed package is actually parsed: a static top-level import would
+// abort the whole module (blanking the page) if the bundle's evaluation or
+// export shape ever failed, whereas a dynamic import keeps any such failure
+// contained to the xz code path. The bundle is a CommonJS package transformed
+// to ESM, so XzReadableStream is exposed on the default export (jsDelivr's
+// cjs->esm lexer cannot surface it as a named export); we accept both shapes.
+const XZ_URL = "/vendor/xz-decompress.js";
+let _xzPromise = null;
+function loadXz() {
+  if (!_xzPromise) {
+    _xzPromise = import(/* @vite-ignore */ XZ_URL).then(
+      (m) => m.XzReadableStream
+        || (m.default && m.default.XzReadableStream)
+        || (typeof m.default === "function" ? m.default : null),
+    );
+  }
+  return _xzPromise;
+}
 
 const INDEX_URL = "https://cardputer.cc/packages/dists/stable/main/binary-arm64/Packages";
 
@@ -32,9 +53,18 @@ const decompressors = {
   gzip: async (data) => streamToBytes(
     new Blob([data]).stream().pipeThrough(new DecompressionStream("gzip")),
   ),
-  xz: async (data) => streamToBytes(
-    new XzReadableStream(new Blob([data]).stream()),
-  ),
+  xz: async (data) => {
+    let XzReadableStream;
+    try {
+      XzReadableStream = await loadXz();
+    } catch {
+      XzReadableStream = null;
+    }
+    if (!XzReadableStream) {
+      throw new Error("无法加载 xz 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验");
+    }
+    return streamToBytes(new XzReadableStream(new Blob([data]).stream()));
+  },
   zstd: async (data) => {
     // Chrome 133+/Edge expose zstd in DecompressionStream; fall back with a hint.
     try {

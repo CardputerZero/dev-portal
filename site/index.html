@@ -76,6 +76,11 @@
     th { color: var(--dim); font-weight: 500; }
     td button { background: transparent; border: 1px solid var(--danger); color: var(--danger);
       border-radius: 5px; padding: 4px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+    td.row-actions { white-space: nowrap; }
+    td.row-actions > * + * { margin-left: 8px; }
+    a.dl-btn { display: inline-block; border: 1px solid var(--accent); color: var(--accent);
+      border-radius: 5px; padding: 4px 12px; font-size: 12px; text-decoration: none; }
+    a.dl-btn:hover { background: var(--accent); color: #04220b; }
     .login-box { text-align: center; padding: 48px 20px; }
     .login-box button { width: auto; padding: 12px 40px; }
     .muted { color: var(--dim); font-size: 13px; }
@@ -146,7 +151,7 @@
           <thead><tr><th>包名</th><th>版本</th><th>Maintainer</th><th></th></tr></thead>
           <tbody id="mine-rows"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
         </table>
-        <p class="muted">列表来自线上 APT 索引，只显示 Maintainer 邮箱属于你的包。下架会生成移除 PR。</p>
+        <p class="muted">列表来自线上 APT 索引，只显示 Maintainer 邮箱属于你的包。可直接下载已发布的 .deb；下架会生成移除 PR。</p>
       </div>
     </section>
   </main>

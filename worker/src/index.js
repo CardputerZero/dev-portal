@@ -32,16 +32,18 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      // NOTE: these are awaited so async rejections are caught here and turned
+      // into a readable JSON 500 instead of an opaque Cloudflare 1101 page.
       switch (`${request.method} ${url.pathname}`) {
-        case "GET /auth/login": return authLogin(url, env);
-        case "GET /auth/callback": return authCallback(request, url, env);
-        case "GET /auth/logout": return authLogout(env);
-        case "GET /api/me": return apiMe(request, env);
-        case "POST /api/submit": return apiSubmit(request, env);
-        case "POST /api/unpublish": return apiUnpublish(request, env);
+        case "GET /auth/login": return await authLogin(url, env);
+        case "GET /auth/callback": return await authCallback(request, url, env);
+        case "GET /auth/logout": return await authLogout(env);
+        case "GET /api/me": return await apiMe(request, env);
+        case "POST /api/submit": return await apiSubmit(request, env);
+        case "POST /api/unpublish": return await apiUnpublish(request, env);
       }
       // Everything else falls through to the static assets.
-      return env.ASSETS.fetch(request);
+      return await env.ASSETS.fetch(request);
     } catch (err) {
       console.error(err.stack || String(err));
       return json(500, { error: "internal", detail: String(err.message || err) });
@@ -71,20 +73,33 @@ async function authCallback(request, url, env) {
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   if (!code || !state || parseCookies(request)[STATE_COOKIE] !== state) {
-    return json(400, { error: "bad_oauth_state" });
+    return json(400, { error: "bad_oauth_state", detail: "state 校验失败，请回到首页重新点击登录（不要直接刷新回调页）" });
+  }
+  if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
+    return json(500, { error: "server_misconfigured", detail: "Worker 缺少 GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET secret" });
+  }
+  if (!env.SESSION_SECRET) {
+    return json(500, { error: "server_misconfigured", detail: "Worker 缺少 SESSION_SECRET secret" });
   }
 
   const tokenResp = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json" },
+    headers: { "content-type": "application/json", accept: "application/json", "user-agent": USER_AGENT },
     body: JSON.stringify({
       client_id: env.GITHUB_CLIENT_ID,
       client_secret: env.GITHUB_CLIENT_SECRET,
       code,
+      redirect_uri: `${url.origin}/auth/callback`,
     }),
   });
-  const { access_token: token } = await tokenResp.json();
-  if (!token) return json(502, { error: "oauth_exchange_failed" });
+  const tokenData = await tokenResp.json().catch(() => ({}));
+  const token = tokenData.access_token;
+  if (!token) {
+    return json(502, {
+      error: "oauth_exchange_failed",
+      detail: tokenData.error_description || tokenData.error || `token 交换失败 (HTTP ${tokenResp.status})`,
+    });
+  }
 
   // Read identity + verified emails, then discard the user token.
   const userHeaders = {
@@ -92,7 +107,14 @@ async function authCallback(request, url, env) {
     accept: "application/vnd.github+json",
     "user-agent": USER_AGENT,
   };
-  const user = await (await fetch("https://api.github.com/user", { headers: userHeaders })).json();
+  const userResp = await fetch("https://api.github.com/user", { headers: userHeaders });
+  const user = await userResp.json().catch(() => ({}));
+  if (!userResp.ok || !user.login) {
+    return json(502, {
+      error: "github_user_failed",
+      detail: user.message || `读取 GitHub 用户信息失败 (HTTP ${userResp.status})`,
+    });
+  }
   let verified = [];
   try {
     const emails = await (await fetch("https://api.github.com/user/emails", { headers: userHeaders })).json();

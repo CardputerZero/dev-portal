@@ -96,8 +96,8 @@
     <!-- 未登录 -->
     <section id="login-view" class="panel login-box hidden">
       <p>上传 / 管理 AppStore 软件包需要 GitHub 登录。<br>
-      <span class="muted">我们通过 GitHub 校验你的已验证邮箱：包的 Maintainer 邮箱必须是你本人，<br>
-      同名包只有原作者（或管理员）可以更新和下架。</span></p>
+      <span class="muted">包名先到先得：谁先上传某个包名，就归属于其 GitHub 账号，<br>
+      之后同名包只有原上传者（或管理员）可以更新和下架。</span></p>
       <button class="primary" onclick="location.href='/auth/login'">使用 GitHub 登录</button>
     </section>
 
@@ -151,7 +151,7 @@
           <thead><tr><th>包名</th><th>版本</th><th>Maintainer</th><th></th></tr></thead>
           <tbody id="mine-rows"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
         </table>
-        <p class="muted">列表来自线上 APT 索引，只显示 Maintainer 邮箱属于你的包。可直接下载已发布的 .deb；下架会生成移除 PR。</p>
+        <p class="muted">列表来自线上 APT 索引，只显示归属于你的包。可直接下载已发布的 .deb；下架会生成移除 PR。</p>
       </div>
     </section>
   </main>

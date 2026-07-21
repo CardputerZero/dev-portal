@@ -21,7 +21,7 @@
  * Vars: see wrangler.toml.
  */
 
-import { compareDebVersions, extractEmail } from "../../site/debparse.js";
+import { compareDebVersions, loginFromNoreply } from "../../site/debparse.js";
 
 const SESSION_COOKIE = "cz_session";
 const STATE_COOKIE = "cz_oauth_state";
@@ -192,15 +192,19 @@ async function apiSubmit(request, env) {
   }
 
   // Pre-flight against the published index: name squatting + version bump.
-  // (Authoritative re-check happens in the packages-repo Action.)
+  // Ownership is first-come-first-served by GitHub login. The Worker can only
+  // read the APT index (Maintainer), so this is a best-effort pre-check that
+  // blocks only when the name is positively attributable to a *different*
+  // login; the packages-repo Action re-checks authoritatively against the
+  // recorded `uploaded_by`.
   const index = await fetchIndex(env);
   const entries = index.get(pkg) || [];
   if (entries.length) {
-    const owner = extractEmail(entries[0].maintainer).toLowerCase();
-    if (!s.a && !s.e.includes(owner)) {
+    const ownerLogin = loginFromNoreply(entries[0].maintainer);
+    if (!s.a && ownerLogin && ownerLogin !== s.l.toLowerCase()) {
       return json(403, {
         error: "not_owner",
-        detail: `包名 "${pkg}" 已被 ${maskEmail(owner)} 占用，只有该邮箱对应的 GitHub 账号或管理员可以更新/下架`,
+        detail: `包名 "${pkg}" 已被 @${ownerLogin} 占用，只有其本人或管理员可以更新/下架`,
       });
     }
     const latest = entries.map((e) => e.version).sort(compareDebVersions).pop();
@@ -271,9 +275,9 @@ async function apiUnpublish(request, env) {
   const entry = entries.find((e) => e.version === version);
   if (!entry) return json(404, { error: "not_published", detail: `${pkg} ${version} 不在线上索引中` });
 
-  const owner = extractEmail(entry.maintainer).toLowerCase();
-  if (!s.a && !s.e.includes(owner)) {
-    return json(403, { error: "not_owner", detail: "只有包的 Maintainer 邮箱对应的账号或管理员可以下架" });
+  const ownerLogin = loginFromNoreply(entry.maintainer);
+  if (!s.a && ownerLogin && ownerLogin !== s.l.toLowerCase()) {
+    return json(403, { error: "not_owner", detail: `包 "${pkg}" 由 @${ownerLogin} 上传，只有其本人或管理员可以下架` });
   }
 
   const dispatch = await gh(env, `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/dispatches`, {
@@ -446,8 +450,3 @@ function unb64url(str) {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 }
 
-function maskEmail(email) {
-  const [user, domain] = email.split("@");
-  if (!domain) return "***";
-  return `${user.slice(0, 2)}***@${domain}`;
-}

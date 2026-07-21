@@ -133,6 +133,18 @@ export function extractEmail(maintainer) {
   return m ? m[1].trim() : (maintainer || "").trim();
 }
 
+/**
+ * Derive a GitHub login from a Maintainer string whose email is a GitHub
+ * noreply address, else "". Handles both `login@users.noreply.github.com` and
+ * the newer `12345+login@users.noreply.github.com` form. Used for ownership
+ * attribution when no explicit `uploaded_by` record exists yet.
+ */
+export function loginFromNoreply(maintainer) {
+  const email = extractEmail(maintainer).toLowerCase();
+  const m = /^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/.exec(email);
+  return m ? m[1] : "";
+}
+
 /* --------------------------- dpkg version compare ------------------------- */
 
 function chOrder(c) {

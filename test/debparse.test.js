@@ -15,7 +15,7 @@ import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseDeb, compareDebVersions, extractEmail } from "../site/debparse.js";
+import { parseDeb, compareDebVersions, extractEmail, loginFromNoreply } from "../site/debparse.js";
 import { decompress as fzstdDecompress } from "../site/vendor/fzstd.js";
 import { decompress as bz2Decompress } from "../site/vendor/bz2.js";
 import { LZMA } from "../site/vendor/lzma-d.js";
@@ -162,4 +162,13 @@ test("dpkg version semantics", () => {
   assert.equal(compareDebVersions("1.0-m5stack2", "1.0-m5stack1"), 1);
   assert.equal(compareDebVersions("2:0.1", "1:9.9"), 1);
   assert.equal(extractEmail("A B <a@b.c>"), "a@b.c");
+});
+
+test("loginFromNoreply extracts owner login for ownership attribution", () => {
+  assert.equal(loginFromNoreply("Dev <dev@users.noreply.github.com>"), "dev");
+  assert.equal(loginFromNoreply("Some One <12345+someone@users.noreply.github.com>"), "someone");
+  assert.equal(loginFromNoreply("EGG <EGG@users.noreply.github.com>"), "egg");
+  // Non-noreply (real) emails are not attributable to a login.
+  assert.equal(loginFromNoreply("Real <real@example.com>"), "");
+  assert.equal(loginFromNoreply(""), "");
 });

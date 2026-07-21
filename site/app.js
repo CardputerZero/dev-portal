@@ -166,6 +166,7 @@ async function pick(f) {
   parsed = null;
   say("", "本地解析中…");
   $("preview-box").classList.add("hidden");
+  resetStoreForm();
   try {
     const buf = await f.arrayBuffer();
     parsed = await parseDeb(buf, decompressors);
@@ -187,6 +188,8 @@ async function renderPreview() {
   $("p-arch").textContent = c.Architecture || "?";
   $("p-size").textContent = `${(parsed.totalInstalledSize / 1048576).toFixed(1)} MB`;
   $("p-maint").textContent = c.Maintainer || "（缺失）";
+
+  $("s-title").placeholder = (parsed.desktop && parsed.desktop.Name) || c.Package || "显示在 AppStore 里的名字";
 
   if (parsed.icon && parsed.icon.isPng) {
     const url = URL.createObjectURL(new Blob([parsed.icon.bytes], { type: "image/png" }));
@@ -257,6 +260,98 @@ async function renderPreview() {
   $("preview-box").classList.remove("hidden");
 }
 
+/* ---------------------------- store metadata form ------------------------ */
+
+let storeIcon = null;     // Blob | null — optional icon override (square PNG)
+const storeShots = [];    // [{ blob, url }] — 320×170 PNG screenshots
+
+// Draw an image into a w×h canvas using "cover" fit (scale to fill, then
+// center-crop) and return a PNG blob. This is how the browser turns an
+// arbitrary user image into an exact 320×170 screenshot or a square icon.
+function coverToPng(img, w, h) {
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+  const dw = img.naturalWidth * scale, dh = img.naturalHeight * scale;
+  ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
+function fileToImage(f) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(f);
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("图片无法读取")); };
+    img.src = url;
+  });
+}
+
+function resetStoreForm() {
+  storeIcon = null;
+  for (const sh of storeShots) URL.revokeObjectURL(sh.url);
+  storeShots.length = 0;
+  for (const id of ["s-title", "s-summary", "s-desc", "s-cats"]) $(id).value = "";
+  $("s-icon-preview").classList.add("hidden");
+  $("s-icon-preview").removeAttribute("src");
+  $("s-icon-clear").classList.add("hidden");
+  renderShots();
+}
+
+function renderShots() {
+  const box = $("s-shots");
+  box.innerHTML = "";
+  storeShots.forEach((sh, i) => {
+    const div = document.createElement("div");
+    div.className = "shot";
+    div.innerHTML = `<img alt="截图 ${i + 1}"><button type="button" data-i="${i}">✕</button>`;
+    div.querySelector("img").src = sh.url;
+    box.appendChild(div);
+  });
+  $("s-shot-btn").disabled = storeShots.length >= 6;
+  $("s-shot-btn").textContent = storeShots.length >= 6 ? "已达 6 张上限" : "+ 添加截图";
+}
+
+$("s-shots").addEventListener("click", (e) => {
+  const i = e.target.getAttribute && e.target.getAttribute("data-i");
+  if (i === null || i === undefined) return;
+  const [removed] = storeShots.splice(Number(i), 1);
+  if (removed) URL.revokeObjectURL(removed.url);
+  renderShots();
+});
+
+$("s-shot-btn").addEventListener("click", () => $("s-shot-file").click());
+$("s-shot-file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f || storeShots.length >= 6) return;
+  try {
+    const blob = await coverToPng(await fileToImage(f), 320, 170);
+    storeShots.push({ blob, url: URL.createObjectURL(blob) });
+    renderShots();
+  } catch (err) { say("err", `截图处理失败：${err.message}`); }
+});
+
+$("s-icon-btn").addEventListener("click", () => $("s-icon").click());
+$("s-icon-clear").addEventListener("click", () => {
+  storeIcon = null;
+  $("s-icon-preview").classList.add("hidden");
+  $("s-icon-preview").removeAttribute("src");
+  $("s-icon-clear").classList.add("hidden");
+});
+$("s-icon").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (!f) return;
+  try {
+    storeIcon = await coverToPng(await fileToImage(f), 128, 128);
+    $("s-icon-preview").src = URL.createObjectURL(storeIcon);
+    $("s-icon-preview").classList.remove("hidden");
+    $("s-icon-clear").classList.remove("hidden");
+  } catch (err) { say("err", `图标处理失败：${err.message}`); }
+});
+
 /* --------------------------------- submit -------------------------------- */
 
 $("submit-btn").addEventListener("click", async () => {
@@ -271,6 +366,15 @@ $("submit-btn").addEventListener("click", async () => {
   body.append("arch", parsed.control.Architecture);
   const repo = $("source-repo").value.trim();
   if (repo) body.append("source_repo", repo);
+
+  // Optional store metadata (empty strings + no images ⇒ Worker treats it as
+  // "not supplied" and falls back to source_repo/deb-derived metadata).
+  body.append("title", $("s-title").value.trim());
+  body.append("summary", $("s-summary").value.trim());
+  body.append("description", $("s-desc").value.trim());
+  body.append("categories", $("s-cats").value.trim());
+  if (storeIcon) body.append("icon", storeIcon, "icon.png");
+  storeShots.forEach((sh, i) => body.append("screenshots", sh.blob, `shot${i}.png`));
 
   try {
     const r = await fetch("/api/submit", { method: "POST", body });

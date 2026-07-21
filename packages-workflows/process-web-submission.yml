@@ -129,6 +129,8 @@ jobs:
         env:
           SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
           PKG: ${{ steps.validate.outputs.pkg }}
+          SUBMITTER: ${{ github.event.client_payload.login }}
+          STORE_JSON: ${{ toJSON(github.event.client_payload.store) }}
         run: |
           set -uo pipefail
           ERR=""
@@ -147,6 +149,55 @@ jobs:
           pkg = os.environ["PKG"]
           dest = Path(f"pool/main/{pkg}")
           dest.mkdir(parents=True, exist_ok=True)
+
+          import hashlib, urllib.request
+
+          PNG_SIG = b"\x89PNG\r\n\x1a\n"
+          def png_dims(data):
+              if len(data) < 24 or data[:8] != PNG_SIG:
+                  return None
+              return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+          def download(url, want_sha, out_path):
+              req = urllib.request.Request(url, headers={"User-Agent": "cz-web-submit"})
+              data = urllib.request.urlopen(req, timeout=120).read()
+              if want_sha and hashlib.sha256(data).hexdigest() != want_sha:
+                  fail(f"checksum mismatch for {url}")
+              out_path.write_bytes(data)
+              return data
+
+          # Highest priority: store metadata + images supplied directly from the
+          # web form. Screenshots/icon are small PNGs uploaded to the buffer
+          # Release; we download and commit them into pool/main/<pkg>/ (no LFS).
+          try:
+              web = json.loads(os.environ.get("STORE_JSON") or "null")
+          except Exception:
+              web = None
+          if isinstance(web, dict):
+              meta = {"title": web.get("title") or pkg,
+                      "summary": web.get("summary", ""),
+                      "categories": web.get("categories", []),
+                      "screenshots": []}
+              if web.get("description"):
+                  meta["description"] = web["description"]
+              shots_dir = dest / "screenshots"
+              shots_dir.mkdir(exist_ok=True)
+              for i, sh in enumerate(web.get("screenshots") or []):
+                  name = Path(sh.get("name") or f"screenshot-{i}.png").name
+                  data = download(sh["url"], sh.get("sha256"), shots_dir / name)
+                  if png_dims(data) != (320, 170):
+                      fail(f"screenshot {name} must be 320x170, got {png_dims(data)}")
+                  meta["screenshots"].append(f"screenshots/{name}")
+              icon = web.get("icon") or {}
+              if icon.get("url"):
+                  iname = Path(icon.get("name") or f"{pkg}_icon.png").name
+                  idata = download(icon["url"], icon.get("sha256"), dest / iname)
+                  if png_dims(idata) is None:
+                      fail("icon must be a PNG")
+                  meta["icon"] = iname
+              meta["author"] = {"github": os.environ.get("SUBMITTER", "")}
+              (dest / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+              sys.exit(0)
 
           # Preferred: app-builder.json store section from the source repo.
           src_root = Path("/tmp/src")

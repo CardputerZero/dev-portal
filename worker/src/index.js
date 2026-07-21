@@ -254,9 +254,10 @@ async function apiSubmit(request, env) {
         version,
         architecture: arch,
         filename: canonical,
-        url: asset.browser_download_url,
-        sha256,
-        size: buf.byteLength,
+        // url/sha256/size are nested under one key: repository_dispatch caps
+        // client_payload at 10 top-level properties, and with `store` we'd
+        // otherwise hit 12 → GitHub returns HTTP 422.
+        binary: { url: asset.browser_download_url, sha256, size: buf.byteLength },
         source_repo: sourceRepo,
         ...(store && store.payload ? { store: store.payload } : {}),
       },

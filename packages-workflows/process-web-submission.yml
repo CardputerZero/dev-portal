@@ -2,11 +2,11 @@
 #
 # Handles `repository_dispatch` (type: web-submission) sent by the developer
 # portal Worker. Authoritative validation with real dpkg-deb: integrity,
-# control fields, .desktop, structure & safety scan, maintainer-email
-# ownership (first submitter owns the package name; admins bypass), and
-# version monotonicity. On success it opens a publish PR (and can auto-merge
-# it when AUTO_MERGE is true); on failure it opens an issue mentioning the
-# submitter.
+# control fields, .desktop, structure & safety scan, first-come-first-served
+# ownership (the package name belongs to the GitHub login that first uploaded
+# it, recorded as `uploaded_by`; admins bypass), and version monotonicity. On
+# success it opens a publish PR (and can auto-merge it when AUTO_MERGE is true);
+# on failure it opens an issue mentioning the submitter.
 
 name: Process Web Submission
 
@@ -87,32 +87,34 @@ jobs:
               fi
             done
 
-            # --- ownership: maintainer email must be one of the submitter's
-            #     verified emails; existing packages only updatable by owner/admin ---
-            EMAIL=$(echo "$MAINT" | grep -oP '<\K[^>]+' || echo "$MAINT")
-            EMAIL=$(echo "$EMAIL" | tr '[:upper:]' '[:lower:]')
-            MATCH=$(echo "$EMAILS_JSON" | jq --arg e "$EMAIL" 'map(ascii_downcase) | contains([$e])')
-            if [ "$MATCH" != "true" ] && [ "$IS_ADMIN" != "true" ]; then
-              ERR="${ERR}- ❌ Maintainer email \`$EMAIL\` is not one of @$SUBMITTER's verified GitHub emails\n"
-            fi
-
-            EXISTING="" ; OWNER_EMAIL=""
+            # --- ownership: package names are first-come-first-served, keyed on
+            #     the uploader's GitHub login (recorded as `uploaded_by` in the
+            #     release manifest). Existing packages are only updatable by the
+            #     recorded owner or an admin. No email-vs-account matching. ---
+            EXISTING="" ; LATEST_MANIFEST=""
             for m in pool/main/"$PKG"/*.deb.release.json; do
               [ -f "$m" ] || continue
               v=$(jq -r '.version // empty' "$m")
               if [ -n "$v" ] && { [ -z "$EXISTING" ] || dpkg --compare-versions "$v" gt "$EXISTING"; }; then
-                EXISTING="$v"
-                u=$(jq -r '.url // empty' "$m")
-                if [ -n "$u" ] && curl -fsL --max-time 300 -o /tmp/existing.deb "$u" 2>/dev/null; then
-                  OWNER_EMAIL=$(dpkg-deb -f /tmp/existing.deb Maintainer 2>/dev/null | grep -oP '<\K[^>]+' | tr '[:upper:]' '[:lower:]' || true)
-                fi
+                EXISTING="$v"; LATEST_MANIFEST="$m"
               fi
             done
-            if [ -n "$OWNER_EMAIL" ] && [ "$IS_ADMIN" != "true" ]; then
-              OWNED=$(echo "$EMAILS_JSON" | jq --arg e "$OWNER_EMAIL" 'map(ascii_downcase) | contains([$e])')
-              if [ "$OWNED" != "true" ]; then
-                ERR="${ERR}- ❌ package '$PKG' is owned by \`$OWNER_EMAIL\`; only the owner or an admin can update it\n"
+            OWNER_LOGIN=""
+            if [ -n "$LATEST_MANIFEST" ]; then
+              OWNER_LOGIN=$(jq -r '.uploaded_by // empty' "$LATEST_MANIFEST" | tr '[:upper:]' '[:lower:]')
+              # Legacy manifests have no `uploaded_by`: derive the owner login
+              # from the published binary's Maintainer noreply address.
+              if [ -z "$OWNER_LOGIN" ]; then
+                u=$(jq -r '.url // empty' "$LATEST_MANIFEST")
+                if [ -n "$u" ] && curl -fsL --max-time 300 -o /tmp/existing.deb "$u" 2>/dev/null; then
+                  OM=$(dpkg-deb -f /tmp/existing.deb Maintainer 2>/dev/null | grep -oP '<\K[^>]+' | tr '[:upper:]' '[:lower:]' || true)
+                  OWNER_LOGIN=$(printf '%s' "$OM" | sed -nE 's/^([0-9]+\+)?([^@]+)@users\.noreply\.github\.com$/\2/p')
+                fi
               fi
+            fi
+            SUBMITTER_LC=$(printf '%s' "$SUBMITTER" | tr '[:upper:]' '[:lower:]')
+            if [ -n "$OWNER_LOGIN" ] && [ "$IS_ADMIN" != "true" ] && [ "$OWNER_LOGIN" != "$SUBMITTER_LC" ]; then
+              ERR="${ERR}- ❌ package '$PKG' is owned by @$OWNER_LOGIN; only the original uploader or an admin can update it\n"
             fi
             if [ -n "$EXISTING" ] && dpkg --compare-versions "$VER" le "$EXISTING"; then
               ERR="${ERR}- ❌ version $VER is not newer than published $EXISTING\n"
@@ -222,6 +224,7 @@ jobs:
           WANT_SHA: ${{ github.event.client_payload.sha256 }}
           SIZE: ${{ github.event.client_payload.size }}
           SUBMITTER: ${{ github.event.client_payload.login }}
+          EMAILS_JSON: ${{ toJSON(github.event.client_payload.emails) }}
           PKG: ${{ steps.validate.outputs.pkg }}
           VER: ${{ steps.validate.outputs.ver }}
           ARCH: ${{ steps.validate.outputs.arch }}
@@ -229,9 +232,14 @@ jobs:
           set -euo pipefail
           NAME="${PKG}_${VER}_${ARCH}.deb"
           ASSET_NAME="${NAME//\~/.}"
+          # Ownership record: first uploader of a package name owns it. The login
+          # is the authoritative owner key; the email is kept for contact/audit.
+          UPLOADER_EMAIL=$(echo "$EMAILS_JSON" | jq -r '.[0] // empty')
+          [ -n "$UPLOADER_EMAIL" ] || UPLOADER_EMAIL="${SUBMITTER}@users.noreply.github.com"
           jq -n --arg f "$ASSET_NAME" --arg u "$DEB_URL" --arg s "$WANT_SHA" \
                 --arg p "$PKG" --arg v "$VER" --arg a "$ARCH" --argjson z "$SIZE" \
-                '{filename:$f,url:$u,sha256:$s,size:$z,package:$p,version:$v,architecture:$a}' \
+                --arg by "$SUBMITTER" --arg em "$UPLOADER_EMAIL" \
+                '{filename:$f,url:$u,sha256:$s,size:$z,package:$p,version:$v,architecture:$a,uploaded_by:$by,uploader_email:$em}' \
                 > "pool/main/$PKG/$ASSET_NAME.release.json"
           BRANCH="publish/${PKG}-${VER}-web-${{ github.run_id }}"
           git config user.name "cardputerzero-bot"

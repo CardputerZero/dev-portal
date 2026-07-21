@@ -269,7 +269,9 @@ async function apiSubmit(request, env) {
     ok: true,
     sha256,
     message: "已提交，服务器正在做最终校验；通过后会自动生成发布 PR。",
-    track_url: `https://github.com/${env.TARGET_OWNER}/${env.TARGET_REPO}/pulls?q=is%3Apr+${pkg}`,
+    // Scope the link to this exact package+version title so it lands on THIS
+    // submission's PR, not stale/older PRs for the same package.
+    track_url: `https://github.com/${env.TARGET_OWNER}/${env.TARGET_REPO}/pulls?q=${encodeURIComponent(`is:pr in:title ${pkg} ${version}`)}`,
     actions_url: `https://github.com/${env.TARGET_OWNER}/${env.TARGET_REPO}/actions/workflows/process-web-submission.yml`,
   });
 }

@@ -1,6 +1,6 @@
 /* CardputerZero developer portal front-end. Same-origin API (see worker/). */
 
-import { parseDeb, compareDebVersions, extractEmail } from "/debparse.js";
+import { parseDeb, compareDebVersions, extractEmail, loginFromNoreply } from "/debparse.js";
 
 // All decompression libraries are vendored at /vendor/ and served same-origin,
 // so there is zero runtime dependency on a third-party CDN (availability,
@@ -198,26 +198,26 @@ async function renderPreview() {
     $("p-noicon").classList.remove("hidden");
   }
 
-  // 邮箱归属预检
-  const email = (parsed.email || "").toLowerCase();
-  const mine = me && me.emails.includes(email);
-  $("p-emailmatch").innerHTML = mine
-    ? `<span class="lv-pass">Maintainer 邮箱与你的 GitHub 已验证邮箱匹配</span>`
-    : `<span class="lv-danger">Maintainer 邮箱 (${email || "缺失"}) 不在你的 GitHub 已验证邮箱里 — 提交会被拒绝${me && me.is_admin ? "（你是管理员，可豁免）" : ""}</span>`;
+  // 上传者归属（包名先到先得，以 GitHub 账号为准，与 deb 里的 Maintainer 邮箱无关）
+  $("p-emailmatch").innerHTML = me
+    ? `<span class="lv-pass">将以 @${me.login} 的身份记录为上传者</span>`
+    : `<span class="lv-danger">请先登录 GitHub 再提交</span>`;
 
-  // 版本 / 包名占用预检
+  // 版本 / 包名占用预检（所有权按上传者 GitHub 账号先到先得）
   const idx = await loadIndex();
   const entries = idx.get(c.Package) || [];
   let verState = "", verOk = true;
   if (!entries.length) {
-    verState = `<span class="lv-pass">新包名，首次提交后归属于你</span>`;
+    verState = `<span class="lv-pass">新包名，首次提交后归属于你${me ? `（@${me.login}）` : ""}</span>`;
   } else {
-    const owner = extractEmail(entries[0].Maintainer || "").toLowerCase();
-    const owned = me && (me.emails.includes(owner) || me.is_admin);
+    // 前端只能读到线上索引里的 Maintainer，尽力从 noreply 地址反推 owner；
+    // 服务端会按记录的 uploaded_by 权威复核。
+    const ownerLogin = loginFromNoreply(entries[0].Maintainer || "");
+    const owned = me && (me.is_admin || (ownerLogin && ownerLogin === me.login.toLowerCase()));
     const latest = entries.map((e) => e.Version).sort(compareDebVersions).pop();
-    if (!owned) {
+    if (ownerLogin && !owned) {
       verOk = false;
-      verState = `<span class="lv-danger">包名已被他人占用（Maintainer: ${owner.slice(0, 2)}***），无法提交</span>`;
+      verState = `<span class="lv-danger">包名已被 @${ownerLogin} 占用，只有其本人或管理员可以更新</span>`;
     } else if (compareDebVersions(c.Version, latest) <= 0) {
       verOk = false;
       verState = `<span class="lv-danger">版本 ${c.Version} 不高于线上已发布的 ${latest}，请提升版本号</span>`;
@@ -251,7 +251,7 @@ async function renderPreview() {
     $("p-scripts-box").classList.add("hidden");
   }
 
-  const blocked = parsed.verdict === "danger" || (!mine && !(me && me.is_admin)) || !verOk;
+  const blocked = parsed.verdict === "danger" || !me || !verOk;
   $("submit-btn").disabled = blocked;
   $("submit-btn").textContent = blocked ? "存在阻断性问题，无法提交" : "提交到 AppStore";
   $("preview-box").classList.remove("hidden");
@@ -292,8 +292,10 @@ async function renderMine() {
   const mine = [];
   for (const [name, entries] of idx) {
     for (const e of entries) {
-      const email = extractEmail(e.Maintainer || "").toLowerCase();
-      if (me.emails.includes(email) || me.is_admin) mine.push({ name, ...e, email });
+      const ownerLogin = loginFromNoreply(e.Maintainer || "");
+      if (me.is_admin || (ownerLogin && ownerLogin === me.login.toLowerCase())) {
+        mine.push({ name, ...e, email: extractEmail(e.Maintainer || "").toLowerCase() });
+      }
     }
   }
   if (!mine.length) {

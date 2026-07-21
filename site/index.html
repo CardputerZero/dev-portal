@@ -32,10 +32,27 @@
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 22px; }
     .hidden { display: none !important; }
     label { display: block; margin: 14px 0 6px; font-size: 13px; color: var(--dim); }
-    input[type="url"] {
+    input[type="url"], input[type="text"], textarea {
       width: 100%; padding: 10px 12px; border-radius: 6px;
       border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit;
     }
+    textarea { resize: vertical; }
+    fieldset.store-fieldset { margin-top: 18px; border: 1px solid var(--line);
+      border-radius: 8px; padding: 4px 16px 18px; }
+    fieldset.store-fieldset legend { color: var(--dim); font-size: 13px; padding: 0 6px; }
+    button.ghost { background: transparent; border: 1px solid var(--line); color: var(--dim);
+      border-radius: 6px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; margin-top: 8px; }
+    button.ghost:hover { border-color: var(--accent); color: var(--text); }
+    .img-row { display: flex; align-items: center; gap: 10px; }
+    .icon-thumb { width: 48px; height: 48px; border-radius: 10px; background: #000;
+      object-fit: contain; image-rendering: pixelated; border: 1px solid var(--line); }
+    .shots { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+    .shot { position: relative; line-height: 0; }
+    .shot img { width: 160px; height: 85px; border: 1px solid var(--line); border-radius: 6px;
+      background: #000; object-fit: cover; image-rendering: pixelated; }
+    .shot button { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.7);
+      border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; font-size: 11px;
+      line-height: 1.4; padding: 1px 6px; cursor: pointer; }
     .drop {
       border: 1.5px dashed var(--line); border-radius: 8px; padding: 30px 16px;
       text-align: center; color: var(--dim); cursor: pointer; transition: border-color .15s;
@@ -139,6 +156,35 @@
 
           <label for="source-repo">源码仓库（可选，公开仓库；含 app-builder.json 的 store 段可自动带入截图等商店信息）</label>
           <input id="source-repo" type="url" placeholder="https://github.com/you/your-app">
+
+          <fieldset class="store-fieldset">
+            <legend>商店信息（可选，填了会覆盖源码仓库/deb 自动带入的信息）</legend>
+
+            <label for="s-title">应用名称</label>
+            <input id="s-title" type="text" placeholder="显示在 AppStore 里的名字">
+
+            <label for="s-summary">一句话简介</label>
+            <input id="s-summary" type="text" maxlength="80" placeholder="80 字以内">
+
+            <label for="s-desc">详细描述</label>
+            <textarea id="s-desc" rows="4" placeholder="支持多行"></textarea>
+
+            <label for="s-cats">分类（逗号分隔，最多 6 个）</label>
+            <input id="s-cats" type="text" placeholder="Games, Emulators">
+
+            <label>图标（可选，正方形 PNG；留空则用 deb 内图标）</label>
+            <div class="img-row">
+              <img id="s-icon-preview" class="icon-thumb hidden" alt="icon 预览">
+              <input id="s-icon" type="file" accept="image/png,image/jpeg,image/webp" class="hidden">
+              <button type="button" class="ghost" id="s-icon-btn">选择图标</button>
+              <button type="button" class="ghost hidden" id="s-icon-clear">移除</button>
+            </div>
+
+            <label>应用截图（320×170，选图后自动裁剪缩放；最多 6 张）</label>
+            <div id="s-shots" class="shots"></div>
+            <input id="s-shot-file" type="file" accept="image/png,image/jpeg,image/webp" class="hidden">
+            <button type="button" class="ghost" id="s-shot-btn">+ 添加截图</button>
+          </fieldset>
 
           <button class="primary" id="submit-btn" disabled>提交到 AppStore</button>
         </div>

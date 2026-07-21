@@ -230,6 +230,18 @@ async function apiSubmit(request, env) {
   if (!upload.ok) return json(502, { error: "upload_failed", detail: await safeText(upload) });
   const asset = await upload.json();
 
+  // Optional store metadata + screenshots/icon supplied directly from the web
+  // form (equivalent to czdev's app-builder.json `store` section). Images go to
+  // the same buffer release as the .deb; the Action downloads and commits them
+  // as small PNGs into pool/main/<pkg>/ (no Git LFS).
+  let store;
+  try {
+    store = await collectStoreAssets(form, env, release, s.l, pkg);
+  } catch (e) {
+    return json(502, { error: "image_upload_failed", detail: String(e && e.message || e) });
+  }
+  if (store && store.error) return json(store.status || 400, { error: store.error, detail: store.detail });
+
   const dispatch = await gh(env, `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/dispatches`, {
     method: "POST",
     body: JSON.stringify({
@@ -246,6 +258,7 @@ async function apiSubmit(request, env) {
         sha256,
         size: buf.byteLength,
         source_repo: sourceRepo,
+        ...(store && store.payload ? { store: store.payload } : {}),
       },
     }),
   });
@@ -371,6 +384,79 @@ async function deleteAsset(env, release, name) {
   if (found) {
     await gh(env, `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/releases/assets/${found.id}`, { method: "DELETE" });
   }
+}
+
+const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+
+// Read a PNG's pixel dimensions from its IHDR chunk without decoding it, or
+// null when the bytes are not a PNG. IHDR is always the first chunk, so width
+// and height are the two big-endian u32 at byte offset 16.
+function pngDims(bytes) {
+  if (bytes.length < 24) return null;
+  for (let i = 0; i < 8; i++) if (bytes[i] !== PNG_SIG[i]) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { w: dv.getUint32(16), h: dv.getUint32(20) };
+}
+
+async function uploadImageAsset(env, release, name, buf) {
+  await deleteAsset(env, release, name);
+  const up = await fetch(
+    `https://uploads.github.com/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}` +
+    `/releases/${release.id}/assets?name=${encodeURIComponent(name)}`,
+    { method: "POST", headers: { ...bot(env), "content-type": "image/png" }, body: buf },
+  );
+  if (!up.ok) throw new Error(await safeText(up));
+  return { url: (await up.json()).browser_download_url, sha256: hex(await crypto.subtle.digest("SHA-256", buf)) };
+}
+
+// Gather optional store metadata + screenshots/icon from the submit form. Returns
+// {} when nothing was supplied (submission falls back to source_repo/deb), a
+// {payload} describing the store section, or an {error, detail, status} on
+// validation failure. Screenshots are enforced at 320×170 (the CardputerZero
+// LCD); icons must be square PNGs.
+async function collectStoreAssets(form, env, release, login, pkg) {
+  const title = String(form.get("title") || "").trim();
+  const summary = String(form.get("summary") || "").trim();
+  const description = String(form.get("description") || "").trim();
+  const categoriesRaw = String(form.get("categories") || "").trim();
+  const iconFile = form.get("icon");
+  const hasIcon = iconFile && typeof iconFile.arrayBuffer === "function" && iconFile.size > 0;
+  const shots = form.getAll("screenshots").filter((f) => f && typeof f.arrayBuffer === "function" && f.size > 0);
+
+  if (!(title || summary || description || categoriesRaw || hasIcon || shots.length)) return {};
+
+  const MAX_IMG = 512 * 1024;
+  const categories = categoriesRaw
+    ? categoriesRaw.split(",").map((c) => c.trim()).filter(Boolean).slice(0, 6)
+    : [];
+  const payload = { title, summary, description, categories, icon: null, screenshots: [] };
+
+  if (shots.length > 6) return { error: "too_many_screenshots", detail: "最多 6 张截图" };
+  let idx = 0;
+  for (const f of shots) {
+    const b = await f.arrayBuffer();
+    if (b.byteLength > MAX_IMG) return { error: "screenshot_too_large", detail: "单张截图需 < 512KB" };
+    const d = pngDims(new Uint8Array(b));
+    if (!d) return { error: "screenshot_not_png", detail: "截图必须是 PNG" };
+    if (d.w !== 320 || d.h !== 170) {
+      return { error: "screenshot_bad_size", detail: `截图必须是 320×170（收到 ${d.w}×${d.h}）` };
+    }
+    const up = await uploadImageAsset(env, release, `${login}__${pkg}__shot${idx}.png`, b);
+    payload.screenshots.push({ name: `screenshot-${idx}.png`, url: up.url, sha256: up.sha256 });
+    idx++;
+  }
+
+  if (hasIcon) {
+    const b = await iconFile.arrayBuffer();
+    if (b.byteLength > MAX_IMG) return { error: "icon_too_large", detail: "图标需 < 512KB" };
+    const d = pngDims(new Uint8Array(b));
+    if (!d) return { error: "icon_not_png", detail: "图标必须是 PNG" };
+    if (d.w !== d.h || d.w > 512) return { error: "icon_bad_size", detail: "图标必须是正方形 PNG（≤512×512）" };
+    const up = await uploadImageAsset(env, release, `${login}__${pkg}__icon.png`, b);
+    payload.icon = { name: `${pkg}_icon.png`, url: up.url, sha256: up.sha256 };
+  }
+
+  return { payload };
 }
 
 /* -------------------------------- sessions ------------------------------- */

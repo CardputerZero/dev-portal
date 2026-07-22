@@ -101,6 +101,12 @@
     .login-box { text-align: center; padding: 48px 20px; }
     .login-box button { width: auto; padding: 12px 40px; }
     .muted { color: var(--dim); font-size: 13px; }
+    .loading { display: flex; align-items: center; justify-content: center; gap: 10px;
+      color: var(--dim); font-size: 13px; padding: 30px 10px; }
+    .spinner { width: 16px; height: 16px; border: 2px solid var(--line);
+      border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite;
+      display: inline-block; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -110,6 +116,11 @@
   </header>
 
   <main>
+    <!-- 启动加载（拉取登录状态期间显示，避免整页空白像出 bug） -->
+    <section id="boot-view" class="panel">
+      <div class="loading"><span class="spinner"></span>加载中…</div>
+    </section>
+
     <!-- 未登录 -->
     <section id="login-view" class="panel login-box hidden">
       <p>上传 / 管理 AppStore 软件包需要 GitHub 登录。<br>
@@ -195,7 +206,7 @@
       <div class="panel hidden" id="mine-panel">
         <table>
           <thead><tr><th>包名</th><th>版本</th><th>Maintainer</th><th></th></tr></thead>
-          <tbody id="mine-rows"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+          <tbody id="mine-rows"><tr><td colspan="4"><div class="loading"><span class="spinner"></span>正在读取你的软件包…</div></td></tr></tbody>
         </table>
         <p class="muted">列表来自线上 APT 索引，只显示归属于你的包。可直接下载已发布的 .deb；下架会生成移除 PR。</p>
       </div>

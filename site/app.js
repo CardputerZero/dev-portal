@@ -109,10 +109,13 @@ async function init() {
     const r = await fetch("/api/me");
     if (r.ok) me = await r.json();
   } catch { /* not logged in */ }
+  $("boot-view").classList.add("hidden");
   $(me ? "app-view" : "login-view").classList.remove("hidden");
   if (me) {
     $("who-box").classList.remove("hidden");
     $("who").textContent = me.login + (me.is_admin ? "（管理员）" : "");
+    // Honor the tab encoded in the URL hash so a refresh stays put.
+    applyRoute();
   }
 }
 
@@ -136,16 +139,38 @@ async function loadIndex() {
 }
 
 /* --------------------------------- tabs ---------------------------------- */
+// Each tab is a distinct URL hash (#/upload, #/mine) so a page refresh keeps
+// the user on the same tab and the browser back/forward buttons work.
 
-$("tab-upload").addEventListener("click", () => switchTab("upload"));
-$("tab-mine").addEventListener("click", () => { switchTab("mine"); renderMine(); });
+function tabFromHash() {
+  return /^#\/?mine\b/.test(location.hash || "") ? "mine" : "upload";
+}
 
-function switchTab(which) {
+// Reflect the current URL hash into the visible tab (no history change).
+function applyRoute() {
+  showTab(tabFromHash());
+}
+
+// Update the visible panels/buttons for a tab, without touching the URL.
+function showTab(which) {
   $("tab-upload").classList.toggle("active", which === "upload");
   $("tab-mine").classList.toggle("active", which === "mine");
   $("upload-panel").classList.toggle("hidden", which !== "upload");
   $("mine-panel").classList.toggle("hidden", which !== "mine");
+  if (which === "mine") renderMine();
 }
+
+// Clicking a tab navigates by hash; the hashchange handler does the rendering.
+// (If the hash is already correct, hashchange won't fire, so render directly.)
+function switchTab(which) {
+  const hash = which === "mine" ? "#/mine" : "#/upload";
+  if (location.hash === hash) showTab(which);
+  else location.hash = hash;
+}
+
+$("tab-upload").addEventListener("click", () => switchTab("upload"));
+$("tab-mine").addEventListener("click", () => switchTab("mine"));
+window.addEventListener("hashchange", applyRoute);
 
 /* ------------------------------ file picking ----------------------------- */
 
@@ -391,7 +416,11 @@ $("submit-btn").addEventListener("click", async () => {
 /* ------------------------------ my packages ------------------------------ */
 
 async function renderMine() {
+  if (!me) return;
   const rows = $("mine-rows");
+  // Show a spinner while the (possibly slow) APT index fetch is in flight, so
+  // an empty table never looks like a broken page.
+  rows.innerHTML = `<tr><td colspan="4"><div class="loading"><span class="spinner"></span>正在读取你的软件包…</div></td></tr>`;
   const idx = await loadIndex();
   const mine = [];
   for (const [name, entries] of idx) {

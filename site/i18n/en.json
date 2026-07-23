@@ -1,0 +1,77 @@
+{
+  "meta": { "title": "Developer Center · CardputerZero AppStore" },
+  "language": { "label": "Language" },
+  "header": { "title": "CardputerZero Developer Center", "logout": "Sign out", "admin": " (admin)" },
+  "boot": { "loading": "Loading…" },
+  "login": {
+    "intro": "Sign in with GitHub to upload and manage AppStore packages.<br><span class=\"muted\">Package names are first-come, first-served: whoever first uploads a name owns it under their GitHub account,<br>and only the original uploader (or an admin) can update or unpublish that name afterwards.</span>",
+    "button": "Sign in with GitHub"
+  },
+  "tabs": { "upload": "Upload package", "mine": "My packages" },
+  "upload": {
+    "dropHtml": "Drag a <b>.deb</b> here, or click to choose a file<br><span class=\"muted\">Parsed locally as soon as you pick it — nothing is uploaded yet</span>",
+    "chosen": "Selected <b>{name}</b> ({size} MB) — click to replace",
+    "pickDeb": "Please choose a .deb file",
+    "localParsing": "Parsing locally…",
+    "parseFailed": "Parse failed: {msg}",
+    "uploading": "Uploading…",
+    "submitOk": "✓ {message}\nReview progress: {actions}\nPublish PR: {track}",
+    "submitFailed": "Submission failed: {msg}"
+  },
+  "preview": {
+    "noIcon": "No icon",
+    "version": "Version",
+    "installSize": "Installed size",
+    "maintainerMissing": "(missing)",
+    "reportTitle": "Preliminary check report",
+    "filesSummary": "File list ({count} files)",
+    "scripts": "Maintainer script contents",
+    "titlePlaceholder": "Name shown in the AppStore",
+    "uploaderAs": "Will be recorded as uploaded by @{login}",
+    "needLogin": "Please sign in with GitHub before submitting",
+    "newPkg": "New package name — after your first submission it belongs to you (@{login})",
+    "newPkgAnon": "New package name — after your first submission it belongs to you",
+    "ownedBy": "This package name is owned by @{login}; only they or an admin can update it",
+    "versionTooLow": "Version {version} is not higher than the published {latest}; please bump the version",
+    "versionUpdate": "Published {latest} → this update is {version}",
+    "submit": "Submit to AppStore",
+    "blocked": "Blocking issues found — cannot submit"
+  },
+  "form": {
+    "sourceRepoLabel": "Source repository (optional, public repo; a store section in app-builder.json can auto-fill screenshots and other store info)",
+    "storeLegend": "Store info (optional; overrides info auto-filled from the source repo / deb)",
+    "appName": "App name",
+    "summary": "One-line summary",
+    "summaryPlaceholder": "Up to 80 characters",
+    "description": "Full description",
+    "descPlaceholder": "Multiple lines supported",
+    "categories": "Categories (comma-separated, up to 6)",
+    "iconLabel": "Icon (optional, square PNG; leave empty to use the icon inside the deb)",
+    "pickIcon": "Choose icon",
+    "removeIcon": "Remove",
+    "screenshotsLabel": "Screenshots (320×170, auto-cropped and resized; up to 6)",
+    "addShot": "+ Add screenshot",
+    "shotLimit": "Reached the 6-image limit",
+    "shotAlt": "Screenshot {n}",
+    "shotProcessFailed": "Screenshot processing failed: {msg}",
+    "iconProcessFailed": "Icon processing failed: {msg}",
+    "imageUnreadable": "Image could not be read"
+  },
+  "mine": {
+    "colPackage": "Package",
+    "colVersion": "Version",
+    "colMaintainer": "Maintainer",
+    "loading": "Loading your packages…",
+    "empty": "No published packages found that belong to you",
+    "download": "Download .deb",
+    "unpublish": "Unpublish",
+    "submitted": "Submitted",
+    "sizeUnknown": "size unknown",
+    "note": "The list comes from the live APT index and only shows packages that belong to you. You can download published .deb files directly; unpublishing opens a removal PR.",
+    "confirmUnpublish": "Unpublish {name} {version}? This opens a removal PR.",
+    "unpublishFailed": "Unpublish failed: {msg}"
+  },
+  "decompress": {
+    "loadFailed": "Could not load the {what} decompression module (used only for local preview). Please refresh and retry; you can still submit — the server completes validation."
+  }
+}

@@ -38,6 +38,63 @@ let parsed = null;
 let file = null;
 let publishedIndex = null;
 
+/* ---------------------------------- i18n --------------------------------- */
+// Mirrors the main cardputer.cc site: zh-CN / en / ja, choice persists in
+// localStorage, falls back to the browser language then zh-CN.
+const SUPPORTED_LOCALES = ["zh-CN", "en", "ja"];
+const LOCALE_KEY = "dev.locale";
+const I18N_TS = Date.now(); // cache-buster for the locale JSON on each load
+let dict = {};
+let locale = resolveInitialLocale();
+
+function resolveInitialLocale() {
+  const stored = localStorage.getItem(LOCALE_KEY);
+  if (SUPPORTED_LOCALES.includes(stored)) return stored;
+  const b = navigator.language || "";
+  if (SUPPORTED_LOCALES.includes(b)) return b;
+  if (b.startsWith("zh")) return "zh-CN";
+  if (b.startsWith("ja")) return "ja";
+  if (b.startsWith("en")) return "en";
+  return "zh-CN";
+}
+
+async function loadLocale(loc) {
+  try {
+    const r = await fetch(`/i18n/${loc}.json?t=${I18N_TS}`);
+    if (r.ok) return await r.json();
+  } catch { /* fall through to zh-CN */ }
+  if (loc !== "zh-CN") {
+    try { return await (await fetch(`/i18n/zh-CN.json?t=${I18N_TS}`)).json(); } catch { /* offline */ }
+  }
+  return {};
+}
+
+// t("a.b", {name}) -> string with {name} interpolated; missing keys echo back.
+function t(key, params = {}) {
+  let v = key.split(".").reduce((o, k) => (o == null ? o : o[k]), dict);
+  if (typeof v !== "string") v = key;
+  return Object.entries(params).reduce((s, [k, val]) => s.replaceAll(`{${k}}`, val), v);
+}
+
+function applyStaticI18n() {
+  document.documentElement.lang = locale;
+  document.title = t("meta.title");
+  document.querySelectorAll("[data-i18n]").forEach((n) => { n.textContent = t(n.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-html]").forEach((n) => { n.innerHTML = t(n.dataset.i18nHtml); });
+  document.querySelectorAll("[data-i18n-ph]").forEach((n) => { n.placeholder = t(n.dataset.i18nPh); });
+  document.querySelectorAll("[data-i18n-aria]").forEach((n) => { n.setAttribute("aria-label", t(n.dataset.i18nAria)); });
+  const sel = $("locale-select");
+  if (sel) sel.value = locale;
+}
+
+// Re-apply everything after a language switch (static chrome + dynamic views).
+function relocalize() {
+  applyStaticI18n();
+  if (me) $("who").textContent = me.login + (me.is_admin ? t("header.admin") : "");
+  if (parsed && file) renderPreview();
+  if (!$("mine-panel").classList.contains("hidden")) renderMine();
+}
+
 /* ------------------------------ decompressors ---------------------------- */
 
 async function streamToBytes(stream) {
@@ -61,7 +118,7 @@ async function loadOrExplain(loader, what) {
     impl = await loader();
   } catch { /* fall through to the user-facing error below */ }
   if (!impl) {
-    throw new Error(`无法加载 ${what} 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验`);
+    throw new Error(t("decompress.loadFailed", { what }));
   }
   return impl;
 }
@@ -105,15 +162,28 @@ const decompressors = {
 /* --------------------------------- init ---------------------------------- */
 
 async function init() {
-  try {
-    const r = await fetch("/api/me");
-    if (r.ok) me = await r.json();
-  } catch { /* not logged in */ }
+  // Fetch the session and the locale strings in parallel.
+  const meP = fetch("/api/me").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  dict = await loadLocale(locale);
+  applyStaticI18n();
+
+  const sel = $("locale-select");
+  if (sel) {
+    sel.value = locale;
+    sel.addEventListener("change", async (e) => {
+      locale = e.target.value;
+      localStorage.setItem(LOCALE_KEY, locale);
+      dict = await loadLocale(locale);
+      relocalize();
+    });
+  }
+
+  me = await meP;
   $("boot-view").classList.add("hidden");
   $(me ? "app-view" : "login-view").classList.remove("hidden");
   if (me) {
     $("who-box").classList.remove("hidden");
-    $("who").textContent = me.login + (me.is_admin ? "（管理员）" : "");
+    $("who").textContent = me.login + (me.is_admin ? t("header.admin") : "");
     // Honor the tab encoded in the URL hash so a refresh stays put.
     applyRoute();
   }
@@ -186,17 +256,17 @@ $("file").addEventListener("change", (e) => pick(e.target.files[0]));
 
 async function pick(f) {
   if (!f) return;
-  if (!f.name.endsWith(".deb")) return say("err", "请选择 .deb 文件");
+  if (!f.name.endsWith(".deb")) return say("err", t("upload.pickDeb"));
   file = f;
   parsed = null;
-  say("", "本地解析中…");
+  say("", t("upload.localParsing"));
   $("preview-box").classList.add("hidden");
   resetStoreForm();
   try {
     const buf = await f.arrayBuffer();
     parsed = await parseDeb(buf, decompressors);
   } catch (err) {
-    return say("err", `解析失败：${err.message}`);
+    return say("err", t("upload.parseFailed", { msg: err.message }));
   }
   say("", "");
   await renderPreview();
@@ -206,15 +276,15 @@ async function pick(f) {
 
 async function renderPreview() {
   const c = parsed.control;
-  $("drop-text").innerHTML = `已选择 <b>${file.name}</b>（${(file.size / 1048576).toFixed(1)} MB）— 点击可更换`;
+  $("drop-text").innerHTML = t("upload.chosen", { name: file.name, size: (file.size / 1048576).toFixed(1) });
   $("p-name").textContent = (parsed.desktop && parsed.desktop.Name) || c.Package || "?";
   $("p-pkg").textContent = c.Package || "";
   $("p-version").textContent = c.Version || "?";
   $("p-arch").textContent = c.Architecture || "?";
   $("p-size").textContent = `${(parsed.totalInstalledSize / 1048576).toFixed(1)} MB`;
-  $("p-maint").textContent = c.Maintainer || "（缺失）";
+  $("p-maint").textContent = c.Maintainer || t("preview.maintainerMissing");
 
-  $("s-title").placeholder = (parsed.desktop && parsed.desktop.Name) || c.Package || "显示在 AppStore 里的名字";
+  $("s-title").placeholder = (parsed.desktop && parsed.desktop.Name) || c.Package || t("preview.titlePlaceholder");
 
   if (parsed.icon && parsed.icon.isPng) {
     const url = URL.createObjectURL(new Blob([parsed.icon.bytes], { type: "image/png" }));
@@ -228,15 +298,15 @@ async function renderPreview() {
 
   // 上传者归属（包名先到先得，以 GitHub 账号为准，与 deb 里的 Maintainer 邮箱无关）
   $("p-emailmatch").innerHTML = me
-    ? `<span class="lv-pass">将以 @${me.login} 的身份记录为上传者</span>`
-    : `<span class="lv-danger">请先登录 GitHub 再提交</span>`;
+    ? `<span class="lv-pass">${t("preview.uploaderAs", { login: me.login })}</span>`
+    : `<span class="lv-danger">${t("preview.needLogin")}</span>`;
 
   // 版本 / 包名占用预检（所有权按上传者 GitHub 账号先到先得）
   const idx = await loadIndex();
   const entries = idx.get(c.Package) || [];
   let verState = "", verOk = true;
   if (!entries.length) {
-    verState = `<span class="lv-pass">新包名，首次提交后归属于你${me ? `（@${me.login}）` : ""}</span>`;
+    verState = `<span class="lv-pass">${me ? t("preview.newPkg", { login: me.login }) : t("preview.newPkgAnon")}</span>`;
   } else {
     // 前端只能读到线上索引里的 Maintainer，尽力从 noreply 地址反推 owner；
     // 服务端会按记录的 uploaded_by 权威复核。
@@ -245,12 +315,12 @@ async function renderPreview() {
     const latest = entries.map((e) => e.Version).sort(compareDebVersions).pop();
     if (ownerLogin && !owned) {
       verOk = false;
-      verState = `<span class="lv-danger">包名已被 @${ownerLogin} 占用，只有其本人或管理员可以更新</span>`;
+      verState = `<span class="lv-danger">${t("preview.ownedBy", { login: ownerLogin })}</span>`;
     } else if (compareDebVersions(c.Version, latest) <= 0) {
       verOk = false;
-      verState = `<span class="lv-danger">版本 ${c.Version} 不高于线上已发布的 ${latest}，请提升版本号</span>`;
+      verState = `<span class="lv-danger">${t("preview.versionTooLow", { version: c.Version, latest })}</span>`;
     } else {
-      verState = `<span class="lv-pass">已发布 ${latest} → 本次更新为 ${c.Version}</span>`;
+      verState = `<span class="lv-pass">${t("preview.versionUpdate", { latest, version: c.Version })}</span>`;
     }
   }
   $("p-verstate").innerHTML = verState;
@@ -266,7 +336,7 @@ async function renderPreview() {
   }
 
   // 文件清单 + 脚本
-  $("p-filecount").textContent = parsed.files.length;
+  $("p-files-summary").textContent = t("preview.filesSummary", { count: parsed.files.length });
   $("p-files").textContent = parsed.files
     .filter((f) => f.type !== "dir")
     .map((f) => `${(f.mode & 0o7777).toString(8).padStart(4, "0")}  ${String(f.size).padStart(9)}  ${f.path}${f.linkname ? " -> " + f.linkname : ""}`)
@@ -281,7 +351,7 @@ async function renderPreview() {
 
   const blocked = parsed.verdict === "danger" || !me || !verOk;
   $("submit-btn").disabled = blocked;
-  $("submit-btn").textContent = blocked ? "存在阻断性问题，无法提交" : "提交到 AppStore";
+  $("submit-btn").textContent = blocked ? t("preview.blocked") : t("preview.submit");
   $("preview-box").classList.remove("hidden");
 }
 
@@ -308,7 +378,7 @@ function fileToImage(f) {
     const img = new Image();
     const url = URL.createObjectURL(f);
     img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("图片无法读取")); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(t("form.imageUnreadable"))); };
     img.src = url;
   });
 }
@@ -330,12 +400,12 @@ function renderShots() {
   storeShots.forEach((sh, i) => {
     const div = document.createElement("div");
     div.className = "shot";
-    div.innerHTML = `<img alt="截图 ${i + 1}"><button type="button" data-i="${i}">✕</button>`;
+    div.innerHTML = `<img alt="${t("form.shotAlt", { n: i + 1 })}"><button type="button" data-i="${i}">✕</button>`;
     div.querySelector("img").src = sh.url;
     box.appendChild(div);
   });
   $("s-shot-btn").disabled = storeShots.length >= 6;
-  $("s-shot-btn").textContent = storeShots.length >= 6 ? "已达 6 张上限" : "+ 添加截图";
+  $("s-shot-btn").textContent = storeShots.length >= 6 ? t("form.shotLimit") : t("form.addShot");
 }
 
 $("s-shots").addEventListener("click", (e) => {
@@ -355,7 +425,7 @@ $("s-shot-file").addEventListener("change", async (e) => {
     const blob = await coverToPng(await fileToImage(f), 320, 170);
     storeShots.push({ blob, url: URL.createObjectURL(blob) });
     renderShots();
-  } catch (err) { say("err", `截图处理失败：${err.message}`); }
+  } catch (err) { say("err", t("form.shotProcessFailed", { msg: err.message })); }
 });
 
 $("s-icon-btn").addEventListener("click", () => $("s-icon").click());
@@ -374,7 +444,7 @@ $("s-icon").addEventListener("change", async (e) => {
     $("s-icon-preview").src = URL.createObjectURL(storeIcon);
     $("s-icon-preview").classList.remove("hidden");
     $("s-icon-clear").classList.remove("hidden");
-  } catch (err) { say("err", `图标处理失败：${err.message}`); }
+  } catch (err) { say("err", t("form.iconProcessFailed", { msg: err.message })); }
 });
 
 /* --------------------------------- submit -------------------------------- */
@@ -382,7 +452,7 @@ $("s-icon").addEventListener("change", async (e) => {
 $("submit-btn").addEventListener("click", async () => {
   if (!file || !parsed) return;
   $("submit-btn").disabled = true;
-  say("", "上传中…");
+  say("", t("upload.uploading"));
 
   const body = new FormData();
   body.append("deb", file);
@@ -405,10 +475,13 @@ $("submit-btn").addEventListener("click", async () => {
     const r = await fetch("/api/submit", { method: "POST", body });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
-    say("ok",
-      `✓ ${data.message}\n审核进度：${data.actions_url}\n发布 PR：${data.track_url}`);
+    say("ok", t("upload.submitOk", {
+      message: data.message,
+      actions: data.actions_url,
+      track: data.track_url,
+    }));
   } catch (err) {
-    say("err", `提交失败：${err.message}`);
+    say("err", t("upload.submitFailed", { msg: err.message }));
     $("submit-btn").disabled = false;
   }
 });
@@ -420,7 +493,7 @@ async function renderMine() {
   const rows = $("mine-rows");
   // Show a spinner while the (possibly slow) APT index fetch is in flight, so
   // an empty table never looks like a broken page.
-  rows.innerHTML = `<tr><td colspan="4"><div class="loading"><span class="spinner"></span>正在读取你的软件包…</div></td></tr>`;
+  rows.innerHTML = `<tr><td colspan="4"><div class="loading"><span class="spinner"></span>${t("mine.loading")}</div></td></tr>`;
   const idx = await loadIndex();
   const mine = [];
   for (const [name, entries] of idx) {
@@ -432,7 +505,7 @@ async function renderMine() {
     }
   }
   if (!mine.length) {
-    rows.innerHTML = `<tr><td colspan="4" class="muted">没有找到属于你的已发布软件包</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="4" class="muted">${t("mine.empty")}</td></tr>`;
     return;
   }
   rows.innerHTML = "";
@@ -444,16 +517,16 @@ async function renderMine() {
     if (dl) {
       const a = document.createElement("a");
       a.className = "dl-btn";
-      a.textContent = "下载 .deb";
+      a.textContent = t("mine.download");
       a.href = dl;
       // Hint the browser to save instead of navigate; the canonical
       // pkg_version_arch.deb name also survives cross-origin redirects.
       a.download = `${p.name}_${p.Version}_${p.Architecture || "arm64"}.deb`;
-      a.title = `${p.name} ${p.Version}（${p.Size ? (p.Size / 1048576).toFixed(1) + " MB" : "大小未知"}）`;
+      a.title = `${p.name} ${p.Version}（${p.Size ? (p.Size / 1048576).toFixed(1) + " MB" : t("mine.sizeUnknown")}）`;
       actions.appendChild(a);
     }
     const btn = document.createElement("button");
-    btn.textContent = "下架";
+    btn.textContent = t("mine.unpublish");
     btn.addEventListener("click", () => unpublish(p, btn));
     actions.appendChild(btn);
     rows.appendChild(tr);
@@ -471,7 +544,7 @@ function debDownloadUrl(entry) {
 }
 
 async function unpublish(p, btn) {
-  if (!confirm(`确认下架 ${p.name} ${p.Version}？将生成移除 PR。`)) return;
+  if (!confirm(t("mine.confirmUnpublish", { name: p.name, version: p.Version }))) return;
   btn.disabled = true;
   try {
     const r = await fetch("/api/unpublish", {
@@ -481,9 +554,9 @@ async function unpublish(p, btn) {
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || data.error);
-    btn.textContent = "已提交";
+    btn.textContent = t("mine.submitted");
   } catch (err) {
-    alert(`下架失败：${err.message}`);
+    alert(t("mine.unpublishFailed", { msg: err.message }));
     btn.disabled = false;
   }
 }

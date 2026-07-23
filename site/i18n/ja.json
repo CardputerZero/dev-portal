@@ -1,0 +1,77 @@
+{
+  "meta": { "title": "開発者センター · CardputerZero AppStore" },
+  "language": { "label": "言語" },
+  "header": { "title": "CardputerZero 開発者センター", "logout": "ログアウト", "admin": "（管理者）" },
+  "boot": { "loading": "読み込み中…" },
+  "login": {
+    "intro": "AppStore パッケージのアップロード・管理には GitHub ログインが必要です。<br><span class=\"muted\">パッケージ名は先着順です。最初にアップロードした人の GitHub アカウントに帰属し、<br>以降は元のアップロード者（または管理者）だけが更新・公開停止できます。</span>",
+    "button": "GitHub でログイン"
+  },
+  "tabs": { "upload": "パッケージをアップロード", "mine": "マイパッケージ" },
+  "upload": {
+    "dropHtml": "<b>.deb</b> をここにドラッグ、またはクリックしてファイルを選択<br><span class=\"muted\">選択するとすぐにローカルで解析します（まだアップロードされません）</span>",
+    "chosen": "選択済み <b>{name}</b>（{size} MB）— クリックで変更",
+    "pickDeb": ".deb ファイルを選択してください",
+    "localParsing": "ローカルで解析中…",
+    "parseFailed": "解析に失敗しました：{msg}",
+    "uploading": "アップロード中…",
+    "submitOk": "✓ {message}\n審査の進捗：{actions}\n公開 PR：{track}",
+    "submitFailed": "送信に失敗しました：{msg}"
+  },
+  "preview": {
+    "noIcon": "アイコンなし",
+    "version": "バージョン",
+    "installSize": "インストール容量",
+    "maintainerMissing": "（未設定）",
+    "reportTitle": "事前チェック結果",
+    "filesSummary": "ファイル一覧（{count} 個）",
+    "scripts": "maintainer スクリプトの内容",
+    "titlePlaceholder": "AppStore に表示される名前",
+    "uploaderAs": "@{login} としてアップロード者に記録されます",
+    "needLogin": "送信前に GitHub にログインしてください",
+    "newPkg": "新しいパッケージ名です。最初の送信であなた（@{login}）に帰属します",
+    "newPkgAnon": "新しいパッケージ名です。最初の送信であなたに帰属します",
+    "ownedBy": "このパッケージ名は @{login} が所有しています。本人または管理者のみ更新できます",
+    "versionTooLow": "バージョン {version} は公開済みの {latest} 以下です。バージョンを上げてください",
+    "versionUpdate": "公開済み {latest} → 今回の更新は {version}",
+    "submit": "AppStore に送信",
+    "blocked": "ブロッキングな問題があり送信できません"
+  },
+  "form": {
+    "sourceRepoLabel": "ソースリポジトリ（任意・公開リポジトリ。app-builder.json の store セクションからスクリーンショット等のストア情報を自動取得できます）",
+    "storeLegend": "ストア情報（任意。入力するとソースリポジトリ/deb からの自動取得情報を上書きします）",
+    "appName": "アプリ名",
+    "summary": "ひとことの概要",
+    "summaryPlaceholder": "80 文字以内",
+    "description": "詳細な説明",
+    "descPlaceholder": "複数行に対応",
+    "categories": "カテゴリ（カンマ区切り・最大 6 個）",
+    "iconLabel": "アイコン（任意・正方形 PNG。未指定なら deb 内のアイコンを使用）",
+    "pickIcon": "アイコンを選択",
+    "removeIcon": "削除",
+    "screenshotsLabel": "スクリーンショット（320×170、選択後に自動でトリミング・リサイズ・最大 6 枚）",
+    "addShot": "+ スクリーンショットを追加",
+    "shotLimit": "6 枚の上限に達しました",
+    "shotAlt": "スクリーンショット {n}",
+    "shotProcessFailed": "スクリーンショットの処理に失敗しました：{msg}",
+    "iconProcessFailed": "アイコンの処理に失敗しました：{msg}",
+    "imageUnreadable": "画像を読み込めませんでした"
+  },
+  "mine": {
+    "colPackage": "パッケージ",
+    "colVersion": "バージョン",
+    "colMaintainer": "Maintainer",
+    "loading": "マイパッケージを読み込み中…",
+    "empty": "あなたに帰属する公開済みパッケージは見つかりませんでした",
+    "download": ".deb をダウンロード",
+    "unpublish": "公開停止",
+    "submitted": "送信済み",
+    "sizeUnknown": "サイズ不明",
+    "note": "一覧はオンラインの APT インデックスから取得し、あなたに帰属するパッケージのみ表示します。公開済みの .deb は直接ダウンロードでき、公開停止は削除 PR を作成します。",
+    "confirmUnpublish": "{name} {version} を公開停止しますか？削除 PR を作成します。",
+    "unpublishFailed": "公開停止に失敗しました：{msg}"
+  },
+  "decompress": {
+    "loadFailed": "{what} の解凍モジュールを読み込めませんでした（ローカルプレビュー用）。更新して再試行してください。そのまま送信もでき、サーバー側で検証します。"
+  }
+}

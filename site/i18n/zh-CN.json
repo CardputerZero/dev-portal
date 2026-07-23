@@ -1,0 +1,77 @@
+{
+  "meta": { "title": "开发者中心 · CardputerZero AppStore" },
+  "language": { "label": "语言" },
+  "header": { "title": "CardputerZero 开发者中心", "logout": "退出", "admin": "（管理员）" },
+  "boot": { "loading": "加载中…" },
+  "login": {
+    "intro": "上传 / 管理 AppStore 软件包需要 GitHub 登录。<br><span class=\"muted\">包名先到先得：谁先上传某个包名，就归属于其 GitHub 账号，<br>之后同名包只有原上传者（或管理员）可以更新和下架。</span>",
+    "button": "使用 GitHub 登录"
+  },
+  "tabs": { "upload": "上传软件包", "mine": "我的软件包" },
+  "upload": {
+    "dropHtml": "拖拽 <b>.deb</b> 到这里，或点击选择文件<br><span class=\"muted\">选择后立即在本地解析，不会上传</span>",
+    "chosen": "已选择 <b>{name}</b>（{size} MB）— 点击可更换",
+    "pickDeb": "请选择 .deb 文件",
+    "localParsing": "本地解析中…",
+    "parseFailed": "解析失败：{msg}",
+    "uploading": "上传中…",
+    "submitOk": "✓ {message}\n审核进度：{actions}\n发布 PR：{track}",
+    "submitFailed": "提交失败：{msg}"
+  },
+  "preview": {
+    "noIcon": "无图标",
+    "version": "版本",
+    "installSize": "安装体积",
+    "maintainerMissing": "（缺失）",
+    "reportTitle": "初步检查报告",
+    "filesSummary": "文件清单（{count} 个文件）",
+    "scripts": "maintainer 脚本内容",
+    "titlePlaceholder": "显示在 AppStore 里的名字",
+    "uploaderAs": "将以 @{login} 的身份记录为上传者",
+    "needLogin": "请先登录 GitHub 再提交",
+    "newPkg": "新包名，首次提交后归属于你（@{login}）",
+    "newPkgAnon": "新包名，首次提交后归属于你",
+    "ownedBy": "包名已被 @{login} 占用，只有其本人或管理员可以更新",
+    "versionTooLow": "版本 {version} 不高于线上已发布的 {latest}，请提升版本号",
+    "versionUpdate": "已发布 {latest} → 本次更新为 {version}",
+    "submit": "提交到 AppStore",
+    "blocked": "存在阻断性问题，无法提交"
+  },
+  "form": {
+    "sourceRepoLabel": "源码仓库（可选，公开仓库；含 app-builder.json 的 store 段可自动带入截图等商店信息）",
+    "storeLegend": "商店信息（可选，填了会覆盖源码仓库/deb 自动带入的信息）",
+    "appName": "应用名称",
+    "summary": "一句话简介",
+    "summaryPlaceholder": "80 字以内",
+    "description": "详细描述",
+    "descPlaceholder": "支持多行",
+    "categories": "分类（逗号分隔，最多 6 个）",
+    "iconLabel": "图标（可选，正方形 PNG；留空则用 deb 内图标）",
+    "pickIcon": "选择图标",
+    "removeIcon": "移除",
+    "screenshotsLabel": "应用截图（320×170，选图后自动裁剪缩放；最多 6 张）",
+    "addShot": "+ 添加截图",
+    "shotLimit": "已达 6 张上限",
+    "shotAlt": "截图 {n}",
+    "shotProcessFailed": "截图处理失败：{msg}",
+    "iconProcessFailed": "图标处理失败：{msg}",
+    "imageUnreadable": "图片无法读取"
+  },
+  "mine": {
+    "colPackage": "包名",
+    "colVersion": "版本",
+    "colMaintainer": "Maintainer",
+    "loading": "正在读取你的软件包…",
+    "empty": "没有找到属于你的已发布软件包",
+    "download": "下载 .deb",
+    "unpublish": "下架",
+    "submitted": "已提交",
+    "sizeUnknown": "大小未知",
+    "note": "列表来自线上 APT 索引，只显示归属于你的包。可直接下载已发布的 .deb；下架会生成移除 PR。",
+    "confirmUnpublish": "确认下架 {name} {version}？将生成移除 PR。",
+    "unpublishFailed": "下架失败：{msg}"
+  },
+  "decompress": {
+    "loadFailed": "无法加载 {what} 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验"
+  }
+}

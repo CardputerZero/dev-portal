@@ -274,6 +274,25 @@ async function pick(f) {
 
 /* -------------------------------- preview -------------------------------- */
 
+// The deb's own Maintainer field is what dpkg-scanpackages publishes into the
+// APT index. When "hide my email" is checked (default) we mask the address in
+// the preview so the developer isn't surprised to see it; the published record
+// (release manifest) is separately kept to a noreply form by the Worker.
+function maintainerDisplay(maintainer) {
+  const m = (maintainer || "").trim();
+  if (!m) return t("preview.maintainerMissing");
+  if (!$("hide-email").checked) return m;
+  const name = m.split("<")[0].trim();
+  const masked = t("preview.emailHiddenTag");
+  return name ? `${name} ${masked}` : masked;
+}
+
+// Re-mask the preview when the checkbox is toggled (only meaningful once a deb
+// has been parsed).
+$("hide-email").addEventListener("change", () => {
+  if (parsed && file) $("p-maint").textContent = maintainerDisplay(parsed.control.Maintainer);
+});
+
 async function renderPreview() {
   const c = parsed.control;
   $("drop-text").innerHTML = t("upload.chosen", { name: file.name, size: (file.size / 1048576).toFixed(1) });
@@ -282,7 +301,7 @@ async function renderPreview() {
   $("p-version").textContent = c.Version || "?";
   $("p-arch").textContent = c.Architecture || "?";
   $("p-size").textContent = `${(parsed.totalInstalledSize / 1048576).toFixed(1)} MB`;
-  $("p-maint").textContent = c.Maintainer || t("preview.maintainerMissing");
+  $("p-maint").textContent = maintainerDisplay(c.Maintainer);
 
   $("s-title").placeholder = (parsed.desktop && parsed.desktop.Name) || c.Package || t("preview.titlePlaceholder");
 
@@ -461,6 +480,9 @@ $("submit-btn").addEventListener("click", async () => {
   body.append("arch", parsed.control.Architecture);
   const repo = $("source-repo").value.trim();
   if (repo) body.append("source_repo", repo);
+  // Privacy: when checked (default) the Worker records a noreply address; when
+  // unchecked it publishes the developer's verified GitHub email instead.
+  body.append("hide_email", $("hide-email").checked ? "true" : "false");
 
   // Optional store metadata (empty strings + no images ⇒ Worker treats it as
   // "not supplied" and falls back to source_repo/deb-derived metadata).

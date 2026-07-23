@@ -173,6 +173,11 @@ async function apiSubmit(request, env) {
   const version = String(form.get("version") || "").trim();
   const arch = String(form.get("arch") || "").trim();
   const sourceRepo = String(form.get("source_repo") || "").trim();
+  // Privacy toggle (default: hide). When hidden we only forward the noreply
+  // form(s), so the packages-repo Action records a noreply address as the
+  // uploader email. When the developer opts in, a verified GitHub email is put
+  // first so it becomes the recorded contact address.
+  const hideEmail = form.get("hide_email") !== "false";
 
   if (!(file && typeof file.arrayBuffer === "function")) return json(400, { error: "missing_deb_file" });
   if (!/^[a-z0-9][a-z0-9.+-]+$/.test(pkg)) return json(400, { error: "bad_package_name" });
@@ -242,13 +247,22 @@ async function apiSubmit(request, env) {
   }
   if (store && store.error) return json(store.status || 400, { error: store.error, detail: store.detail });
 
+  // s.e is [noreply…, …verified]; the Action uses element [0] as the recorded
+  // uploader email. Hide → keep only noreply; show → put a verified email first
+  // (falling back to noreply when the account exposes none).
+  const noreply = s.e.filter((e) => e.endsWith("@users.noreply.github.com"));
+  const verified = s.e.filter((e) => !e.endsWith("@users.noreply.github.com"));
+  const emailsOut = hideEmail
+    ? noreply
+    : (verified.length ? [...verified, ...noreply] : s.e);
+
   const dispatch = await gh(env, `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/dispatches`, {
     method: "POST",
     body: JSON.stringify({
       event_type: "web-submission",
       client_payload: {
         login: s.l,
-        emails: s.e,
+        emails: emailsOut,
         is_admin: s.a,
         package: pkg,
         version,

@@ -1,13 +1,26 @@
 {
-  "meta": { "title": "开发者中心 · CardputerZero AppStore" },
-  "language": { "label": "语言" },
-  "header": { "title": "CardputerZero 开发者中心", "logout": "退出", "admin": "（管理员）" },
-  "boot": { "loading": "加载中…" },
+  "meta": {
+    "title": "开发者中心 · CardputerZero AppStore"
+  },
+  "language": {
+    "label": "语言"
+  },
+  "header": {
+    "title": "CardputerZero 开发者中心",
+    "logout": "退出",
+    "admin": "（管理员）"
+  },
+  "boot": {
+    "loading": "加载中…"
+  },
   "login": {
     "intro": "上传 / 管理 AppStore 软件包需要 GitHub 登录。<br><span class=\"muted\">包名先到先得：谁先上传某个包名，就归属于其 GitHub 账号，<br>之后同名包只有原上传者（或管理员）可以更新和下架。</span>",
     "button": "使用 GitHub 登录"
   },
-  "tabs": { "upload": "上传软件包", "mine": "我的软件包" },
+  "tabs": {
+    "upload": "上传软件包",
+    "mine": "我的软件包"
+  },
   "upload": {
     "dropHtml": "拖拽 <b>.deb</b> 到这里，或点击选择文件<br><span class=\"muted\">选择后立即在本地解析，不会上传</span>",
     "chosen": "已选择 <b>{name}</b>（{size} MB）— 点击可更换",
@@ -62,16 +75,19 @@
   "mine": {
     "colPackage": "包名",
     "colVersion": "版本",
-    "colMaintainer": "Maintainer",
+    "colMaintainer": "归属",
     "loading": "正在读取你的软件包…",
     "empty": "没有找到属于你的已发布软件包",
     "download": "下载 .deb",
     "unpublish": "下架",
     "submitted": "已提交",
     "sizeUnknown": "大小未知",
-    "note": "列表来自线上 APT 索引，只显示归属于你的包。可直接下载已发布的 .deb；下架会生成移除 PR。",
+    "note": "列表来自线上 APT 索引与你最近的发布 PR，只显示归属于你的包。刚提交的包会先显示为「审核中」，合并后索引更新约需几分钟。可直接下载已发布的 .deb；下架会生成移除 PR。",
     "confirmUnpublish": "确认下架 {name} {version}？将生成移除 PR。",
-    "unpublishFailed": "下架失败：{msg}"
+    "unpublishFailed": "下架失败：{msg}",
+    "statusReview": "审核中",
+    "statusPublishing": "已合并，索引更新中…",
+    "viewPr": "查看 PR"
   },
   "decompress": {
     "loadFailed": "无法加载 {what} 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验"

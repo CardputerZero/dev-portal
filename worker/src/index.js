@@ -39,6 +39,7 @@ export default {
         case "GET /auth/callback": return await authCallback(request, url, env);
         case "GET /auth/logout": return await authLogout(env);
         case "GET /api/me": return await apiMe(request, env);
+        case "GET /api/my-submissions": return await apiMySubmissions(request, env);
         case "POST /api/submit": return await apiSubmit(request, env);
         case "POST /api/unpublish": return await apiUnpublish(request, env);
       }
@@ -197,15 +198,16 @@ async function apiSubmit(request, env) {
   }
 
   // Pre-flight against the published index: name squatting + version bump.
-  // Ownership is first-come-first-served by GitHub login. The Worker can only
-  // read the APT index (Maintainer), so this is a best-effort pre-check that
+  // Ownership is first-come-first-served by GitHub login, resolved from the
+  // published owners.json (aggregated from the release manifests' uploaded_by)
+  // with a noreply-Maintainer fallback for legacy packages. This pre-check
   // blocks only when the name is positively attributable to a *different*
   // login; the packages-repo Action re-checks authoritatively against the
   // recorded `uploaded_by`.
-  const index = await fetchIndex(env);
+  const [index, owners] = await Promise.all([fetchIndex(env), fetchOwners(env)]);
   const entries = index.get(pkg) || [];
   if (entries.length) {
-    const ownerLogin = loginFromNoreply(entries[0].maintainer);
+    const ownerLogin = packageOwner(owners, pkg) || loginFromNoreply(entries[0].maintainer);
     if (!s.a && ownerLogin && ownerLogin !== s.l.toLowerCase()) {
       return json(403, {
         error: "not_owner",
@@ -300,12 +302,12 @@ async function apiUnpublish(request, env) {
   if (!/^[a-z0-9][a-z0-9.+-]+$/.test(pkg || "")) return json(400, { error: "bad_package_name" });
   if (!/^[a-zA-Z0-9.+~:-]+$/.test(version || "")) return json(400, { error: "bad_version" });
 
-  const index = await fetchIndex(env);
+  const [index, owners] = await Promise.all([fetchIndex(env), fetchOwners(env)]);
   const entries = index.get(pkg) || [];
   const entry = entries.find((e) => e.version === version);
   if (!entry) return json(404, { error: "not_published", detail: `${pkg} ${version} 不在线上索引中` });
 
-  const ownerLogin = loginFromNoreply(entry.maintainer);
+  const ownerLogin = packageOwner(owners, pkg) || loginFromNoreply(entry.maintainer);
   if (!s.a && ownerLogin && ownerLogin !== s.l.toLowerCase()) {
     return json(403, { error: "not_owner", detail: `包 "${pkg}" 由 @${ownerLogin} 上传，只有其本人或管理员可以下架` });
   }
@@ -333,7 +335,75 @@ async function apiUnpublish(request, env) {
   });
 }
 
+/* ----------------------------- my submissions ----------------------------- */
+
+/**
+ * Recent publish PRs belonging to the caller, so the portal can show
+ * just-uploaded packages that are not (yet) in the published APT index:
+ * open = under review, merged = published but the index/CDN may still be
+ * rebuilding. Portal submissions are matched by the "(portal submission by
+ * @login)" title suffix (the PR author is the bot); czdev submissions are
+ * matched by the PR author itself. Admins see everyone's submissions.
+ */
+async function apiMySubmissions(request, env) {
+  const s = await openSession(request, env);
+  if (!s) return json(401, { error: "not_logged_in" });
+
+  const resp = await gh(
+    env,
+    `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/pulls?state=all&sort=created&direction=desc&per_page=50`,
+  );
+  if (!resp.ok) return json(502, { error: "github_failed", detail: await safeText(resp) });
+  const prs = await resp.json();
+
+  const me = s.l.toLowerCase();
+  const out = [];
+  for (const pr of prs) {
+    const m = /^publish: (\S+) (\S+)/.exec(pr.title || "");
+    if (!m) continue;
+    const portal = /\(portal submission by @([\w-]+)\)/i.exec(pr.title);
+    const submitter = (portal ? portal[1] : (pr.user && pr.user.login) || "").toLowerCase();
+    if (!s.a && submitter !== me) continue;
+    out.push({
+      package: m[1],
+      version: m[2],
+      submitter,
+      state: pr.merged_at ? "merged" : pr.state, // "open" | "merged" | "closed"
+      url: pr.html_url,
+      created_at: pr.created_at,
+      merged_at: pr.merged_at,
+    });
+  }
+  return json(200, out);
+}
+
 /* ------------------------------ APT index -------------------------------- */
+
+/**
+ * Authoritative package ownership published by the packages repo's Pages
+ * build: { "<package>": { "<version>": "<github login, lowercase>" } },
+ * aggregated from the release manifests' `uploaded_by`. Missing for legacy
+ * packages — callers fall back to loginFromNoreply(Maintainer).
+ */
+async function fetchOwners(env) {
+  const url = env.PACKAGES_INDEX_URL.replace(/\/dists\/.*$/, "/owners.json");
+  try {
+    const resp = await fetch(url, { headers: { "user-agent": USER_AGENT }, cf: { cacheTtl: 60 } });
+    if (resp.ok) return await resp.json();
+  } catch { /* not deployed yet / unreachable — fall back to Maintainer */ }
+  return {};
+}
+
+/** First recorded login for a package (all versions share one owner). */
+function packageOwner(owners, pkg) {
+  const versions = owners && owners[pkg];
+  if (!versions) return "";
+  for (const v of Object.keys(versions)) {
+    const login = String(versions[v] || "").toLowerCase();
+    if (login) return login;
+  }
+  return "";
+}
 
 /** Parse the published Packages index into Map<name, [{version, maintainer, architecture}]>. */
 async function fetchIndex(env) {

@@ -189,11 +189,25 @@ async function init() {
   }
 }
 
+// The index/owners caches expire quickly (and are dropped entirely after a
+// successful submit) so "My packages" reflects a fresh publish without a full
+// page reload; the ?t= cache-buster defeats stale CDN/browser copies.
+const INDEX_TTL_MS = 30 * 1000;
+let indexFetchedAt = 0;
+let ownersCache = null;
+
+function invalidateIndexCache() {
+  publishedIndex = null;
+  ownersCache = null;
+  indexFetchedAt = 0;
+}
+
 async function loadIndex() {
-  if (publishedIndex) return publishedIndex;
+  if (publishedIndex && Date.now() - indexFetchedAt < INDEX_TTL_MS) return publishedIndex;
   publishedIndex = new Map();
+  indexFetchedAt = Date.now();
   try {
-    const text = await (await fetch(INDEX_URL)).text();
+    const text = await (await fetch(`${INDEX_URL}?t=${Date.now()}`)).text();
     for (const para of text.split(/\n\n+/)) {
       const f = {};
       for (const line of para.split("\n")) {
@@ -206,6 +220,44 @@ async function loadIndex() {
     }
   } catch { /* offline preview still works */ }
   return publishedIndex;
+}
+
+/**
+ * Authoritative ownership map published alongside the APT index:
+ * { "<package>": { "<version>": "<github login, lowercase>" } }, aggregated
+ * from the release manifests' `uploaded_by`. Legacy packages predating the
+ * ownership record are absent — callers fall back to loginFromNoreply.
+ */
+async function loadOwners() {
+  if (ownersCache && Date.now() - indexFetchedAt < INDEX_TTL_MS) return ownersCache;
+  ownersCache = {};
+  try {
+    const url = INDEX_URL.replace(/dists\/.*$/, "owners.json");
+    const r = await fetch(`${url}?t=${Date.now()}`);
+    if (r.ok) ownersCache = await r.json();
+  } catch { /* fall back to Maintainer-derived ownership */ }
+  return ownersCache;
+}
+
+/** Owner login of a published package: owners.json first, noreply fallback. */
+function packageOwner(owners, pkg, entries) {
+  const versions = owners && owners[pkg];
+  if (versions) {
+    for (const v of Object.keys(versions)) {
+      const login = String(versions[v] || "").toLowerCase();
+      if (login) return login;
+    }
+  }
+  return loginFromNoreply((entries && entries[0] && entries[0].Maintainer) || "");
+}
+
+/** Recent publish PRs of mine (open = under review, merged = index rebuilding). */
+async function loadMySubmissions() {
+  try {
+    const r = await fetch("/api/my-submissions");
+    if (r.ok) return await r.json();
+  } catch { /* portal API unreachable — published list still renders */ }
+  return [];
 }
 
 /* --------------------------------- tabs ---------------------------------- */
@@ -321,15 +373,15 @@ async function renderPreview() {
     : `<span class="lv-danger">${t("preview.needLogin")}</span>`;
 
   // 版本 / 包名占用预检（所有权按上传者 GitHub 账号先到先得）
-  const idx = await loadIndex();
+  const [idx, owners] = await Promise.all([loadIndex(), loadOwners()]);
   const entries = idx.get(c.Package) || [];
   let verState = "", verOk = true;
   if (!entries.length) {
     verState = `<span class="lv-pass">${me ? t("preview.newPkg", { login: me.login }) : t("preview.newPkgAnon")}</span>`;
   } else {
-    // 前端只能读到线上索引里的 Maintainer，尽力从 noreply 地址反推 owner；
-    // 服务端会按记录的 uploaded_by 权威复核。
-    const ownerLogin = loginFromNoreply(entries[0].Maintainer || "");
+    // owners.json 是发布侧聚合的权威归属（uploaded_by）；老包缺记录时退回
+    // 从 noreply Maintainer 反推。服务端会按 uploaded_by 权威复核。
+    const ownerLogin = packageOwner(owners, c.Package, entries);
     const owned = me && (me.is_admin || (ownerLogin && ownerLogin === me.login.toLowerCase()));
     const latest = entries.map((e) => e.Version).sort(compareDebVersions).pop();
     if (ownerLogin && !owned) {
@@ -497,6 +549,9 @@ $("submit-btn").addEventListener("click", async () => {
     const r = await fetch("/api/submit", { method: "POST", body });
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+    // Drop the cached index/owners so "My packages" immediately shows this
+    // submission (as a pending row) instead of a stale snapshot.
+    invalidateIndexCache();
     say("ok", t("upload.submitOk", {
       message: data.message,
       actions: data.actions_url,
@@ -516,24 +571,52 @@ async function renderMine() {
   // Show a spinner while the (possibly slow) APT index fetch is in flight, so
   // an empty table never looks like a broken page.
   rows.innerHTML = `<tr><td colspan="4"><div class="loading"><span class="spinner"></span>${t("mine.loading")}</div></td></tr>`;
-  const idx = await loadIndex();
+  const [idx, owners, submissions] = await Promise.all([loadIndex(), loadOwners(), loadMySubmissions()]);
+
   const mine = [];
   for (const [name, entries] of idx) {
+    // Ownership is per-package (first-come): resolve once from owners.json,
+    // falling back to a noreply Maintainer for legacy packages.
+    const ownerLogin = packageOwner(owners, name, entries);
+    if (!(me.is_admin || (ownerLogin && ownerLogin === me.login.toLowerCase()))) continue;
     for (const e of entries) {
-      const ownerLogin = loginFromNoreply(e.Maintainer || "");
-      if (me.is_admin || (ownerLogin && ownerLogin === me.login.toLowerCase())) {
-        mine.push({ name, ...e, email: extractEmail(e.Maintainer || "").toLowerCase() });
-      }
+      mine.push({ name, ...e, owner: ownerLogin, email: extractEmail(e.Maintainer || "").toLowerCase() });
     }
   }
-  if (!mine.length) {
+
+  // Submissions not yet in the published index: open PR = under review;
+  // merged PR = published but the index/CDN is still rebuilding (~minutes).
+  const pending = submissions.filter((sub) => {
+    if (sub.state !== "open" && sub.state !== "merged") return false;
+    return !(idx.get(sub.package) || []).some((e) => e.Version === sub.version);
+  });
+
+  if (!mine.length && !pending.length) {
     rows.innerHTML = `<tr><td colspan="4" class="muted">${t("mine.empty")}</td></tr>`;
     return;
   }
   rows.innerHTML = "";
+  for (const sub of pending) {
+    const tr = document.createElement("tr");
+    const status = sub.state === "open" ? t("mine.statusReview") : t("mine.statusPublishing");
+    tr.innerHTML = `<td>${sub.package}</td><td>${sub.version}</td><td>@${sub.submitter}</td><td class="row-actions"></td>`;
+    const actions = tr.lastElementChild;
+    const badge = document.createElement("span");
+    badge.className = "muted";
+    badge.textContent = status;
+    actions.appendChild(badge);
+    const a = document.createElement("a");
+    a.className = "dl-btn";
+    a.textContent = t("mine.viewPr");
+    a.href = sub.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    actions.appendChild(a);
+    rows.appendChild(tr);
+  }
   for (const p of mine.sort((a, b) => a.name.localeCompare(b.name) || compareDebVersions(a.Version, b.Version))) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${p.name}</td><td>${p.Version}</td><td>${p.email}</td><td class="row-actions"></td>`;
+    tr.innerHTML = `<td>${p.name}</td><td>${p.Version}</td><td>${p.owner ? "@" + p.owner : p.email}</td><td class="row-actions"></td>`;
     const actions = tr.lastElementChild;
     const dl = debDownloadUrl(p);
     if (dl) {

@@ -1,13 +1,26 @@
 {
-  "meta": { "title": "Developer Center · CardputerZero AppStore" },
-  "language": { "label": "Language" },
-  "header": { "title": "CardputerZero Developer Center", "logout": "Sign out", "admin": " (admin)" },
-  "boot": { "loading": "Loading…" },
+  "meta": {
+    "title": "Developer Center · CardputerZero AppStore"
+  },
+  "language": {
+    "label": "Language"
+  },
+  "header": {
+    "title": "CardputerZero Developer Center",
+    "logout": "Sign out",
+    "admin": " (admin)"
+  },
+  "boot": {
+    "loading": "Loading…"
+  },
   "login": {
     "intro": "Sign in with GitHub to upload and manage AppStore packages.<br><span class=\"muted\">Package names are first-come, first-served: whoever first uploads a name owns it under their GitHub account,<br>and only the original uploader (or an admin) can update or unpublish that name afterwards.</span>",
     "button": "Sign in with GitHub"
   },
-  "tabs": { "upload": "Upload package", "mine": "My packages" },
+  "tabs": {
+    "upload": "Upload package",
+    "mine": "My packages"
+  },
   "upload": {
     "dropHtml": "Drag a <b>.deb</b> here, or click to choose a file<br><span class=\"muted\">Parsed locally as soon as you pick it — nothing is uploaded yet</span>",
     "chosen": "Selected <b>{name}</b> ({size} MB) — click to replace",
@@ -62,16 +75,19 @@
   "mine": {
     "colPackage": "Package",
     "colVersion": "Version",
-    "colMaintainer": "Maintainer",
+    "colMaintainer": "Owner",
     "loading": "Loading your packages…",
     "empty": "No published packages found that belong to you",
     "download": "Download .deb",
     "unpublish": "Unpublish",
     "submitted": "Submitted",
     "sizeUnknown": "size unknown",
-    "note": "The list comes from the live APT index and only shows packages that belong to you. You can download published .deb files directly; unpublishing opens a removal PR.",
+    "note": "The list combines the live APT index with your recent publish PRs and only shows packages that belong to you. A fresh submission first appears as \"under review\"; after merge the index takes a few minutes to rebuild. You can download published .deb files directly; unpublishing opens a removal PR.",
     "confirmUnpublish": "Unpublish {name} {version}? This opens a removal PR.",
-    "unpublishFailed": "Unpublish failed: {msg}"
+    "unpublishFailed": "Unpublish failed: {msg}",
+    "statusReview": "Under review",
+    "statusPublishing": "Merged, index rebuilding…",
+    "viewPr": "View PR"
   },
   "decompress": {
     "loadFailed": "Could not load the {what} decompression module (used only for local preview). Please refresh and retry; you can still submit — the server completes validation."

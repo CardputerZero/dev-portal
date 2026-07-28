@@ -1,13 +1,26 @@
 {
-  "meta": { "title": "開発者センター · CardputerZero AppStore" },
-  "language": { "label": "言語" },
-  "header": { "title": "CardputerZero 開発者センター", "logout": "ログアウト", "admin": "（管理者）" },
-  "boot": { "loading": "読み込み中…" },
+  "meta": {
+    "title": "開発者センター · CardputerZero AppStore"
+  },
+  "language": {
+    "label": "言語"
+  },
+  "header": {
+    "title": "CardputerZero 開発者センター",
+    "logout": "ログアウト",
+    "admin": "（管理者）"
+  },
+  "boot": {
+    "loading": "読み込み中…"
+  },
   "login": {
     "intro": "AppStore パッケージのアップロード・管理には GitHub ログインが必要です。<br><span class=\"muted\">パッケージ名は先着順です。最初にアップロードした人の GitHub アカウントに帰属し、<br>以降は元のアップロード者（または管理者）だけが更新・公開停止できます。</span>",
     "button": "GitHub でログイン"
   },
-  "tabs": { "upload": "パッケージをアップロード", "mine": "マイパッケージ" },
+  "tabs": {
+    "upload": "パッケージをアップロード",
+    "mine": "マイパッケージ"
+  },
   "upload": {
     "dropHtml": "<b>.deb</b> をここにドラッグ、またはクリックしてファイルを選択<br><span class=\"muted\">選択するとすぐにローカルで解析します（まだアップロードされません）</span>",
     "chosen": "選択済み <b>{name}</b>（{size} MB）— クリックで変更",
@@ -62,16 +75,19 @@
   "mine": {
     "colPackage": "パッケージ",
     "colVersion": "バージョン",
-    "colMaintainer": "Maintainer",
+    "colMaintainer": "所有者",
     "loading": "マイパッケージを読み込み中…",
     "empty": "あなたに帰属する公開済みパッケージは見つかりませんでした",
     "download": ".deb をダウンロード",
     "unpublish": "公開停止",
     "submitted": "送信済み",
     "sizeUnknown": "サイズ不明",
-    "note": "一覧はオンラインの APT インデックスから取得し、あなたに帰属するパッケージのみ表示します。公開済みの .deb は直接ダウンロードでき、公開停止は削除 PR を作成します。",
+    "note": "一覧はオンラインの APT インデックスと最近の公開 PR から取得し、あなたに帰属するパッケージのみ表示します。提出直後は「審査中」と表示され、マージ後のインデックス更新には数分かかります。公開済みの .deb は直接ダウンロードでき、公開停止は削除 PR を作成します。",
     "confirmUnpublish": "{name} {version} を公開停止しますか？削除 PR を作成します。",
-    "unpublishFailed": "公開停止に失敗しました：{msg}"
+    "unpublishFailed": "公開停止に失敗しました：{msg}",
+    "statusReview": "審査中",
+    "statusPublishing": "マージ済み、インデックス更新中…",
+    "viewPr": "PR を見る"
   },
   "decompress": {
     "loadFailed": "{what} の解凍モジュールを読み込めませんでした（ローカルプレビュー用）。更新して再試行してください。そのまま送信もでき、サーバー側で検証します。"

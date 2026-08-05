@@ -18,7 +18,11 @@ TARGET_REPO = "packages"
 # Unified org-controlled staging release: web uploads land in the same
 # release that czdev submissions are mirrored into (was: web-upload-buffer).
 BUFFER_TAG = "staging"
-MAX_SIZE_MB = "64"
+# Cloudflare caps request bodies at 100 MB on Free/Pro (200 on Business), and
+# that cap covers the whole request. 80 leaves room for the metadata parts plus
+# the ambiguity in how Cloudflare counts a "MB". Bytes are streamed straight to
+# GitHub, so this is no longer bounded by the 128 MB isolate memory limit.
+MAX_SIZE_MB = "80"
 PACKAGES_INDEX_URL = "https://cardputer.cc/packages/dists/stable/main/binary-arm64/Packages"
 # Comma-separated GitHub logins with admin power (can update/unpublish any package).
 ADMIN_LOGINS = ""

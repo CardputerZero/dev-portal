@@ -101,15 +101,25 @@ GitHub → Settings → Developer settings → OAuth Apps → New OAuth App：
   HMAC 签名的 HttpOnly cookie 维持 24h 会话，不保存用户 OAuth token。
 - **信任边界**：用户上传内容一律视为不可信——浏览器解析只做预览体验，
   Worker 只做魔数/大小/归属/版本预检；语义校验全部在 packages 仓库
-  Actions 里用 `dpkg-deb` 完成，`.deb` 永不被执行。
+  Actions 里用 `dpkg-deb` 完成，`.deb` 永不被执行。唯一由浏览器提供的值是
+  `.deb` 的 sha256（流式转发意味着 Worker 不再持有完整文件），它只作为传输
+  完整性校验值转交 Actions，由 `sha256sum` 复算并在不符时拒绝；声明的字节数
+  则是被强制的而非被采信的，`FixedLengthStream` 会让长度不符的上传直接失败。
 - **身份绑定**：包的 `Maintainer` 邮箱必须 ∈ 提交者的 GitHub 已验证邮箱
   （或 `<login>@users.noreply.github.com`），抢占式归属，防冒名顶替或
   覆盖他人的包；`ADMIN_LOGINS` 管理员可管理任意包。
 - **payload 传递**：workflow 中所有来自 dispatch payload 的值只经 env
   传入 shell，杜绝模板注入。
-- **上限**：Worker 默认 64 MB（`MAX_SIZE_MB`），Cloudflare 免费版请求体
-  上限 100 MB。
-- 可选加固：Cloudflare 侧对 `/api/submit` 配 rate limiting 规则防刷。
+- **上限**：Worker 默认 80 MB（`MAX_SIZE_MB`）。`.deb` 的字节是流式转发的
+  （`FixedLengthStream`，内存只占单个 chunk），所以真正的天花板是 Cloudflare
+  按账户套餐限制的请求体大小：Free/Pro 100 MB、Business 200 MB、Enterprise
+  默认 500 MB，80 是给元数据部分和 "MB" 的进制歧义留的余量。要突破 100 MB
+  只能改成浏览器分片直传对象存储，Worker 侧再大的数字都无效。
+- **上传票据**：`/api/submit/prepare` 用 `SESSION_SECRET` 签发短时效票据
+  （1 小时），后两步凭票据操作，Worker 因此无需 KV/Durable Object 保存中间
+  状态。票据带 kind 标记且绑定签发时的登录名，既不能用会话 cookie 冒充，也
+  不能被他人复用。
+- 可选加固：Cloudflare 侧对 `/api/submit/*` 配 rate limiting 规则防刷。
 
 ## 与 OSS 直传的取舍
 

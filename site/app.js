@@ -32,10 +32,21 @@ const loadLzma = () => lazyImport("/vendor/lzma-d.js", (m) => m.LZMA);
 
 const INDEX_URL = "https://cardputer.cc/packages/dists/stable/main/binary-arm64/Packages";
 
+// The upload is a three-step handshake (see worker/): /api/submit/prepare
+// mints a signed ticket, the ticket authorizes streaming the bytes to
+// /api/submit/deb, and /api/submit/finalize attaches the store assets.
+const TICKET_HEADER = "x-cz-upload-ticket";
+
 const $ = (id) => document.getElementById(id);
 let me = null;
 let parsed = null;
 let file = null;
+// The Worker streams the .deb straight through to GitHub and never sees it as
+// one buffer, so the digest is computed here, where the bytes already are.
+let debSha256 = "";
+// Server-advertised upload cap; 0 until /api/config answers, in which case the
+// pre-flight request reports an oversized file instead.
+let maxSizeMb = 0;
 let publishedIndex = null;
 
 /* ---------------------------------- i18n --------------------------------- */
@@ -162,8 +173,9 @@ const decompressors = {
 /* --------------------------------- init ---------------------------------- */
 
 async function init() {
-  // Fetch the session and the locale strings in parallel.
+  // Fetch the session, the upload limit and the locale strings in parallel.
   const meP = fetch("/api/me").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const configP = fetch("/api/config").then((r) => (r.ok ? r.json() : null)).catch(() => null);
   dict = await loadLocale(locale);
   applyStaticI18n();
 
@@ -179,6 +191,8 @@ async function init() {
   }
 
   me = await meP;
+  const config = await configP;
+  if (config && config.max_size_mb) maxSizeMb = config.max_size_mb;
   $("boot-view").classList.add("hidden");
   $(me ? "app-view" : "login-view").classList.remove("hidden");
   if (me) {
@@ -309,13 +323,18 @@ $("file").addEventListener("change", (e) => pick(e.target.files[0]));
 async function pick(f) {
   if (!f) return;
   if (!f.name.endsWith(".deb")) return say("err", t("upload.pickDeb"));
+  if (maxSizeMb && f.size > maxSizeMb * 1048576) {
+    return say("err", t("upload.tooLarge", { size: (f.size / 1048576).toFixed(1), max: maxSizeMb }));
+  }
   file = f;
   parsed = null;
+  debSha256 = "";
   say("", t("upload.localParsing"));
   $("preview-box").classList.add("hidden");
   resetStoreForm();
   try {
     const buf = await f.arrayBuffer();
+    debSha256 = hex(await crypto.subtle.digest("SHA-256", buf));
     parsed = await parseDeb(buf, decompressors);
   } catch (err) {
     return say("err", t("upload.parseFailed", { msg: err.message }));
@@ -523,32 +542,48 @@ $("s-icon").addEventListener("change", async (e) => {
 $("submit-btn").addEventListener("click", async () => {
   if (!file || !parsed) return;
   $("submit-btn").disabled = true;
-  say("", t("upload.uploading"));
 
-  const body = new FormData();
-  body.append("deb", file);
-  body.append("package", parsed.control.Package);
-  body.append("version", parsed.control.Version);
-  body.append("arch", parsed.control.Architecture);
   const repo = $("source-repo").value.trim();
-  if (repo) body.append("source_repo", repo);
-  // Privacy: when checked (default) the Worker records a noreply address; when
-  // unchecked it publishes the developer's verified GitHub email instead.
-  body.append("hide_email", $("hide-email").checked ? "true" : "false");
-
-  // Optional store metadata (empty strings + no images ⇒ Worker treats it as
-  // "not supplied" and falls back to source_repo/deb-derived metadata).
-  body.append("title", $("s-title").value.trim());
-  body.append("summary", $("s-summary").value.trim());
-  body.append("description", $("s-desc").value.trim());
-  body.append("categories", $("s-cats").value.trim());
-  if (storeIcon) body.append("icon", storeIcon, "icon.png");
-  storeShots.forEach((sh, i) => body.append("screenshots", sh.blob, `shot${i}.png`));
-
   try {
-    const r = await fetch("/api/submit", { method: "POST", body });
-    const data = await r.json();
+    // 1. Everything that can be judged without the package itself — ownership,
+    //    version bump, size — so a rejection costs no upload time.
+    say("", t("upload.checking"));
+    let ticket = await postJson("/api/submit/prepare", {
+      package: parsed.control.Package,
+      version: parsed.control.Version,
+      arch: parsed.control.Architecture,
+      sha256: debSha256,
+      size: file.size,
+      source_repo: repo,
+    });
+
+    // 2. The bytes, which the Worker forwards to the release as they arrive.
+    ticket = await putDeb(ticket, file);
+
+    // 3. Store metadata and the small PNGs, then the publish dispatch. Empty
+    //    strings + no images ⇒ the Worker treats the store section as "not
+    //    supplied" and falls back to source_repo/deb-derived metadata.
+    say("", t("upload.finalizing"));
+    const body = new FormData();
+    if (repo) body.append("source_repo", repo);
+    // Privacy: when checked (default) the Worker records a noreply address;
+    // when unchecked it publishes the developer's verified GitHub email.
+    body.append("hide_email", $("hide-email").checked ? "true" : "false");
+    body.append("title", $("s-title").value.trim());
+    body.append("summary", $("s-summary").value.trim());
+    body.append("description", $("s-desc").value.trim());
+    body.append("categories", $("s-cats").value.trim());
+    if (storeIcon) body.append("icon", storeIcon, "icon.png");
+    storeShots.forEach((sh, i) => body.append("screenshots", sh.blob, `shot${i}.png`));
+
+    const r = await fetch("/api/submit/finalize", {
+      method: "POST",
+      headers: { [TICKET_HEADER]: ticket },
+      body,
+    });
+    const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+
     // Drop the cached index/owners so "My packages" immediately shows this
     // submission (as a pending row) instead of a stale snapshot.
     invalidateIndexCache();
@@ -562,6 +597,51 @@ $("submit-btn").addEventListener("click", async () => {
     $("submit-btn").disabled = false;
   }
 });
+
+async function postJson(path, obj) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(obj),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+  return data.ticket;
+}
+
+/**
+ * Send the .deb and report progress while it goes. This is the one request
+ * that uses XMLHttpRequest: fetch() cannot report upload progress, and a
+ * package this size takes long enough that a silent wait looks like a hang.
+ * Resolves with the ticket extended to reference the stored asset.
+ */
+function putDeb(ticket, blob) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", "/api/submit/deb");
+    xhr.setRequestHeader(TICKET_HEADER, ticket);
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    const total = (blob.size / 1048576).toFixed(1);
+    say("", t("upload.uploading"));
+    xhr.upload.addEventListener("progress", (e) => {
+      if (!e.lengthComputable) return;
+      say("", t("upload.progress", {
+        percent: Math.floor((e.loaded / e.total) * 100),
+        done: (e.loaded / 1048576).toFixed(1),
+        total,
+      }));
+    });
+    xhr.addEventListener("load", () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status === 200 && data.ticket) resolve(data.ticket);
+      else reject(new Error(data.detail || data.error || `HTTP ${xhr.status}`));
+    });
+    xhr.addEventListener("error", () => reject(new Error(t("upload.networkFailed"))));
+    xhr.addEventListener("abort", () => reject(new Error(t("upload.aborted"))));
+    xhr.send(blob);
+  });
+}
 
 /* ------------------------------ my packages ------------------------------ */
 
@@ -670,6 +750,10 @@ function say(kind, text) {
   const el = $("status");
   el.className = `status ${kind}`;
   el.textContent = text;
+}
+
+function hex(buf) {
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 init();

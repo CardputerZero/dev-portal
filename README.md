@@ -18,11 +18,13 @@
   │    展示图标 / 包名 / 版本 / .desktop / 邮箱 / 文件清单 / 安全报告
   │    并对照线上索引预检：包名归属、版本是否重复/倒退
   │ ② GitHub OAuth 登录（scope: user:email，读取已验证邮箱）
-  │ ③ POST /api/submit（同域，无 CORS）
+  │ ③ 三步提交（同域，无 CORS）：prepare 拿票据 → deb 传字节 → finalize
   ▼
 Cloudflare Worker（本仓库 worker/，静态页面同域托管）
-  │ ④ 会话校验 + 归属/版本预检（拉线上 Packages 索引比对）
-  │ ⑤ .deb 存入 packages 仓库 web-upload-buffer Release（BOT_TOKEN）
+  │ ④ 会话校验 + 归属/版本预检（拉线上 Packages 索引比对），过了才发票据，
+  │    因此包名被占或版本倒退在传字节之前就被挡住
+  │ ⑤ .deb 流式转发进 packages 仓库 staging Release（BOT_TOKEN），全程不落
+  │    内存，上限由 Cloudflare 请求体限制而非 Worker 的 128 MB 内存决定
   │ ⑥ repository_dispatch: web-submission
   ▼
 CardputerZero/packages Actions（packages-workflows/ 里的两个 workflow）

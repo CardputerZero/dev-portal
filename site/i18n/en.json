@@ -57,6 +57,15 @@
     "submit": "Submit to AppStore",
     "blocked": "Blocking issues found — cannot submit"
   },
+  "pathHelp": {
+    "title": "Install paths rejected — how to fix them",
+    "rule": "Debian's standard locations are all allowed; the one requirement is that whatever lands in a shared directory carries your package's name, so an app cannot quietly take over a system command or another package's files. Separators are ignored when matching, so package fontpreview may use a font_preview directory.",
+    "hint": "Paste the whole block below into an assistant (Cursor / Claude / ChatGPT). It carries the full policy plus the paths that were rejected, so it can fix your packaging scripts directly:",
+    "copy": "Copy prompt",
+    "show": "Show the full prompt",
+    "copied": "Copied",
+    "copyFailed": "Copy failed — select the text below manually"
+  },
   "form": {
     "sourceRepoLabel": "Source repository (optional, public repo; a store section in app-builder.json can auto-fill screenshots and other store info)",
     "storeLegend": "Store info (optional; overrides info auto-filled from the source repo / deb)",

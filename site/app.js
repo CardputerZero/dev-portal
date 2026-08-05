@@ -1,6 +1,6 @@
 /* CardputerZero developer portal front-end. Same-origin API (see worker/). */
 
-import { parseDeb, compareDebVersions, extractEmail, loginFromNoreply } from "/debparse.js";
+import { parseDeb, compareDebVersions, extractEmail, loginFromNoreply, installPathPrompt } from "/debparse.js";
 
 // All decompression libraries are vendored at /vendor/ and served same-origin,
 // so there is zero runtime dependency on a third-party CDN (availability,
@@ -364,6 +364,18 @@ $("hide-email").addEventListener("change", () => {
   if (parsed && file) $("p-maint").textContent = maintainerDisplay(parsed.control.Maintainer);
 });
 
+$("p-pathhelp-copy").addEventListener("click", async (e) => {
+  try {
+    await navigator.clipboard.writeText($("p-pathhelp-prompt").textContent);
+    e.target.textContent = t("pathHelp.copied");
+    setTimeout(() => { e.target.textContent = t("pathHelp.copy"); }, 1500);
+  } catch {
+    // Denied clipboard permission or an insecure origin: the prompt is on the
+    // page anyway, so just let the developer select it.
+    e.target.textContent = t("pathHelp.copyFailed");
+  }
+});
+
 async function renderPreview() {
   const c = parsed.control;
   $("drop-text").innerHTML = t("upload.chosen", { name: file.name, size: (file.size / 1048576).toFixed(1) });
@@ -423,6 +435,16 @@ async function renderPreview() {
     li.className = `lv-${level}`;
     li.textContent = msg;
     ul.appendChild(li);
+  }
+
+  // Path problems block the upload, so the fix has to be available right here —
+  // the same prompt the packages repo puts in its failure issue.
+  const pathHelp = $("p-pathhelp-box");
+  if (parsed.badPaths.length) {
+    $("p-pathhelp-prompt").textContent = installPathPrompt(c.Package, parsed.badPaths);
+    pathHelp.classList.remove("hidden");
+  } else {
+    pathHelp.classList.add("hidden");
   }
 
   // 文件清单 + 脚本

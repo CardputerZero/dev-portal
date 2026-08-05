@@ -41,9 +41,10 @@ update-index.yml（已有）→ .deb 提升进 apt-pool → APT 索引/商店 JS
 
 ## 抢占式包名归属
 
-- 新包名：任何人首次提交即占有（deb 的 `Maintainer` 邮箱必须是提交者
-  GitHub 账号的已验证邮箱或 `<login>@users.noreply.github.com`）。
-- 已有包名：仅当线上包的 Maintainer 邮箱 ∈ 提交者已验证邮箱时可更新/下架。
+- 新包名：任何人首次提交即占有，归属记录为提交者的 GitHub 登录名（发布清单
+  里的 `uploaded_by`）。不做 deb 的 `Maintainer` 邮箱与 GitHub 账号的匹配。
+- 已有包名：仅记录的上传者本人或管理员可更新/下架；早期没有 `uploaded_by`
+  的包，从线上包 `Maintainer` 的 noreply 地址反推登录名。
 - 管理员：`wrangler.toml` 的 `ADMIN_LOGINS`（逗号分隔的 GitHub 登录名）
   可管理任意包。
 - 相同版本再次提交 → 前端与服务端都会提示"版本已存在，请提升版本号"。
@@ -51,8 +52,15 @@ update-index.yml（已有）→ .deb 提升进 apt-pool → APT 索引/商店 JS
 ## 初步安全报告（浏览器 + CI 双层）
 
 - setuid/setgid、全局可写、设备文件、路径穿越
-- 安装路径白名单（`usr/share/APPLaunch/`、`lib/systemd/system/`、
-  `usr/share/<pkg>/`、`usr/lib/<pkg>/`、`opt/<pkg>/`、`usr/share/doc/`）
+- 安装路径策略：对齐 Debian 的标准位置（`usr/bin/`、`usr/share/`、`usr/lib/`、
+  `opt/`、`etc/`、`var/lib/`、`usr/share/APPLaunch/`、`usr/share/doc/`、
+  `(usr/)lib/systemd/system/`），但共享目录里的文件名/目录名必须与包名相关
+  （比对时忽略 `-` `_` `.` 的差异），因此装不进 `usr/bin/ls` 或 `sshd.service`；
+  `usr/local/` 与 `/bin` `/sbin` `/lib` 等 usr-merge 别名路径按 Debian Policy
+  9.1.2 / 10.1 一律拒绝。被拒时网页与失败 issue 都会给出规则说明和一段可直接
+  交给 AI 的提示词（前端 `site/debparse.js` 与 CI 的实现由测试保证逐字一致）。
+- systemd 服务不得以 root 运行（`[Service]` 需有非 root 的 `User=`
+  或 `DynamicUser=`），浏览器与 CI 同样判定
 - ELF 架构核对（非 arm64 告警）
 - maintainer 脚本危险模式（`rm -rf /`、`curl|sh`、写设备、动 passwd/cron 等）
 - 缺 `.desktop`/图标、包名/架构不合法、超大文件

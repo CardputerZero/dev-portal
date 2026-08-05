@@ -152,7 +152,8 @@ test("flags malicious content", async () => {
   assert.equal(r.verdict, "danger");
   assert.match(msgs, /下载并直接执行代码/);
   assert.match(msgs, /setuid/);
-  assert.match(msgs, /非常规安装路径.*cron/);
+  // etc/cron.d/ is not this package's own directory, so the policy blocks it.
+  assert.match(msgs, /安装路径不合规.*cron/);
 });
 
 test("dpkg version semantics", () => {

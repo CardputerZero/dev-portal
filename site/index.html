@@ -88,6 +88,7 @@
     .report { margin-top: 14px; font-size: 13px; }
     .report li { list-style: none; margin: 3px 0; }
     .report ul { padding: 0; margin: 6px 0; }
+    .report .dim { color: var(--dim); margin: 6px 0; line-height: 1.6; }
     .lv-pass::before { content: "✓ "; color: var(--accent); }
     .lv-info::before { content: "· "; color: var(--dim); }
     .lv-warn::before { content: "⚠ "; color: var(--warn); }
@@ -180,6 +181,16 @@
           <div class="report">
             <b data-i18n="preview.reportTitle">初步检查报告</b>
             <ul id="report-list"></ul>
+          </div>
+
+          <!-- Shown only when the install path policy rejected something: the
+               rule, plus a prompt that gets an assistant to fix the packaging. -->
+          <div class="report hidden" id="p-pathhelp-box">
+            <b data-i18n="pathHelp.title">安装路径不合规，怎么改？</b>
+            <p class="dim" data-i18n="pathHelp.rule">我们放行 Debian 的标准位置，只要求落在共享目录里的文件名/目录名带上你的包名，这样一个应用不会悄悄覆盖系统命令或别人的文件。比对时忽略 - _ . 的差异，所以包名 fontpreview 用 font_preview 目录是可以的。</p>
+            <p class="dim" data-i18n="pathHelp.hint">把下面整段复制给 AI（Cursor / Claude / ChatGPT），它带着完整规则和你这次被拒的路径，可以直接帮你改打包脚本：</p>
+            <button type="button" class="ghost" id="p-pathhelp-copy" data-i18n="pathHelp.copy">复制提示词</button>
+            <details><summary data-i18n="pathHelp.show">查看提示词全文</summary><pre id="p-pathhelp-prompt"></pre></details>
           </div>
 
           <details><summary id="p-files-summary"></summary><pre id="p-files"></pre></details>

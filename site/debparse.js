@@ -197,13 +197,170 @@ export function compareDebVersions(va, vb) {
 
 /* ------------------------------ safety report ---------------------------- */
 
-function allowedPrefixes(pkgName) {
-  return [
-    "usr/share/APPLaunch/",
-    "lib/systemd/system/",
-    "usr/share/doc/",
-    ...(pkgName ? [`usr/share/${pkgName}/`, `usr/lib/${pkgName}/`, `opt/${pkgName}/`] : []),
-  ];
+/* --------------------------- install path policy -------------------------- */
+
+// Roots that may only contain a subdirectory named after the package.
+const PKG_DIR_ROOTS = ["usr/share/", "usr/lib/", "opt/", "var/lib/"];
+// Debian Policy 10.1: on merged-usr systems these are symlinks into /usr and
+// packages must not ship paths under them. lib/systemd/system is grandfathered
+// in because already-published packages use it.
+const ALIASED_ROOTS = ["bin/", "sbin/", "lib/", "lib32/", "lib64/", "libx32/"];
+const SYSTEMD_DIRS = ["lib/systemd/system/", "usr/lib/systemd/system/"];
+const UNIT_SUFFIX = /\.(service|socket|timer|target|path|mount)$/;
+
+const ALLOWED_SUMMARY = "允许 usr/bin/<与包名相关的可执行文件>、" +
+  "usr/share|usr/lib|opt|var/lib 下与包名相关的子目录、etc/ 下与包名相关的配置、" +
+  "usr/share/APPLaunch/、usr/share/doc/、systemd 服务目录";
+
+const normalizeName = (s) => s.toLowerCase().replace(/[-_.]/g, "");
+
+/**
+ * Is `name` recognizably the package's own? Compared with separators ignored
+ * and in both directions, so package `fontpreview` accepts a `font_preview`
+ * directory and package `myapp` accepts a `myapp-cli` binary, while neither
+ * accepts `ls`.
+ */
+function namedAfterPackage(name, pkgName) {
+  const a = normalizeName(name.replace(UNIT_SUFFIX, ""));
+  const b = normalizeName(pkgName || "");
+  return Boolean(a && b) && (a.startsWith(b) || b.startsWith(a));
+}
+
+/**
+ * Where a package is allowed to install files. Aligned with Debian rather than
+ * a hand-rolled prefix list: /usr/bin is where Policy 10.1 says executables
+ * belong, and a data directory need not be spelled exactly like the package
+ * (Debian's own fonts-noto-cjk installs into /usr/share/fonts/opentype/noto/).
+ * What is still enforced is that anything landing in a *shared* directory
+ * carries the package's name, so an upload cannot quietly take over
+ * /usr/bin/ls or sshd.service.
+ *
+ * Mirrored by the packages repo's process-web-submission.yml (install path
+ * policy step), which is the authoritative check — keep the two in sync.
+ *
+ * Returns null when the path is fine, otherwise why it is not.
+ */
+export function installPathIssue(path, pkgName) {
+  if (path.startsWith("usr/local/")) {
+    return "Debian Policy 9.1.2 禁止软件包写入 /usr/local（那是留给系统管理员的）";
+  }
+  const systemdDir = SYSTEMD_DIRS.find((d) => path.startsWith(d));
+  if (systemdDir) {
+    const unit = path.slice(systemdDir.length);
+    if (unit.includes("/")) return "systemd 服务目录下不应再有子目录";
+    return namedAfterPackage(unit, pkgName)
+      ? null
+      : `systemd 服务名必须与包名 ${pkgName} 相关，避免覆盖系统服务`;
+  }
+  if (ALIASED_ROOTS.some((r) => path.startsWith(r))) {
+    return "Debian Policy 10.1 禁止软件包写入 /bin /sbin /lib 等 usr-merge 别名路径，请改用 /usr 下的对应位置";
+  }
+  if (path.startsWith("usr/share/APPLaunch/") || path.startsWith("usr/share/doc/")) return null;
+  // /etc/<pkg>.conf is as much a Debian convention as /etc/<pkg>/ (compare
+  // rsyslog.conf, logrotate.conf), so a lone conffile is fine here.
+  if (path.startsWith("etc/")) {
+    const rest = path.slice("etc/".length);
+    const top = rest.includes("/") ? rest.slice(0, rest.indexOf("/")) : rest;
+    return namedAfterPackage(top, pkgName)
+      ? null
+      : `etc/ 下只能放与包名 ${pkgName} 相关的配置文件或目录，${top} 不符合`;
+  }
+  if (path.startsWith("usr/bin/")) {
+    const exe = path.slice("usr/bin/".length);
+    if (exe.includes("/")) {
+      return "/usr/bin 下不应有子目录，程序数据请放 usr/share/<包名>/ 或 usr/lib/<包名>/";
+    }
+    return namedAfterPackage(exe, pkgName)
+      ? null
+      : `/usr/bin 下的文件名必须与包名 ${pkgName} 相关，避免覆盖系统命令`;
+  }
+  const root = PKG_DIR_ROOTS.find((r) => path.startsWith(r));
+  if (root) {
+    const rest = path.slice(root.length);
+    if (!rest.includes("/")) return `不能直接放在 ${root} 下，请放进 ${root}<包名>/ 子目录`;
+    const top = rest.slice(0, rest.indexOf("/"));
+    return namedAfterPackage(top, pkgName)
+      ? null
+      : `${root}${top}/ 的目录名必须与包名 ${pkgName} 相关`;
+  }
+  return `不在允许的安装位置内（${ALLOWED_SUMMARY}）`;
+}
+
+/**
+ * Handed to the developer whenever a path is rejected, here and in the failure
+ * issue the Action opens. Self-contained on purpose: it carries the whole policy
+ * plus the offending paths, so pasting it into an assistant is enough to get the
+ * packaging fixed. Mirrored in process-web-submission.yml (PROMPT) and kept
+ * verbatim by test/installpath.test.js.
+ */
+const INSTALL_PATH_PROMPT = `我在给 CardputerZero AppStore 打一个 Debian 包（.deb），提交后被商店的安装路径检查拒绝了。
+请帮我修改打包脚本（CMakeLists.txt / debian/rules / install 脚本 / Makefile，看项目里用的是哪种），
+把文件装到合规位置，并同步更新 .desktop 里的 Exec 和 Icon、以及代码里读取资源文件的路径。
+
+商店的规则（包名记作 PKG，比对时忽略 - _ . 的差异，所以 PKG 是 fontpreview 时目录叫 font_preview 也算合规）：
+
+允许安装到：
+- usr/bin/<名字>：可执行文件，名字必须与包名相关（这是 Debian Policy 10.1 的标准位置）
+- usr/share/<与包名相关的目录>/**：图片、字体、音频等只读资源
+- usr/lib/<与包名相关的目录>/**：私有库、插件
+- opt/<与包名相关的目录>/**：整体打包自带的目录
+- etc/<与包名相关的目录>/** 或 etc/<与包名相关>.conf：配置文件（Debian conffile 惯例）
+- var/lib/<与包名相关的目录>/**：运行时数据
+- usr/share/APPLaunch/**：CardputerZero 启动器资源，且必须有 usr/share/APPLaunch/applications/<名字>.desktop
+- usr/share/doc/**：文档
+- lib/systemd/system/<与包名相关>.service 或 usr/lib/systemd/system/<同样>：服务名必须与包名相关，
+  且 [Service] 段必须写 User=<非 root 用户>（商店拒绝以 root 运行的服务）
+
+禁止：
+- usr/local/** —— Debian Policy 9.1.2 明令禁止软件包写入
+- 以 bin/ sbin/ lib/ lib32/ lib64/ libx32/ 开头的路径 —— Debian Policy 10.1（usr-merge 别名路径），请改用 usr/ 下的对应位置
+- 直接散落在 usr/share/ 或 usr/lib/ 下的文件 —— 必须收进以包名命名的子目录
+- 在 usr/bin/ 下建子目录
+- 名字与包名无关的共享目录名、可执行文件名或服务名（这是为了防止覆盖系统文件）
+- setuid/setgid 文件、设备文件
+
+我的包名 PKG = {pkg}
+这次被拒绝的路径：
+{paths}
+
+请告诉我具体要改哪些文件、改成什么，以及资源路径在源码里怎么同步修改。`;
+
+// Where the Action looks for system units, etc/systemd/system included even
+// though the path policy rejects it — a unit there still runs as root.
+const SERVICE_SCAN_DIRS = [
+  "lib/systemd/system/", "usr/lib/systemd/system/", "etc/systemd/system/",
+];
+
+/**
+ * Does this unit run as root? Apps must not, and the packages Action rejects the
+ * package when they do, so the same reading is done here: root unless [Service]
+ * names a non-root User= or turns on DynamicUser=.
+ */
+export function unitRunsAsRoot(text) {
+  let inService = false, user = null, dynamic = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line[0] === "#" || line[0] === ";") continue;
+    if (line.startsWith("[") && line.endsWith("]")) {
+      inService = line.toLowerCase() === "[service]";
+      continue;
+    }
+    if (!inService || !line.includes("=")) continue;
+    const key = line.slice(0, line.indexOf("=")).trim().toLowerCase();
+    const value = line.slice(line.indexOf("=") + 1).trim();
+    if (key === "user") user = value;
+    else if (key === "dynamicuser") dynamic = ["1", "yes", "true", "on"].includes(value.toLowerCase());
+  }
+  if (dynamic) return false;
+  if (!user) return true;
+  return user === "root" || user === "0";
+}
+
+/** The prompt above, filled in for this package and its rejected paths. */
+export function installPathPrompt(pkgName, badPaths) {
+  const shown = badPaths.slice(0, 40).join("\n");
+  const rest = badPaths.length > 40 ? `\n…（另外 ${badPaths.length - 40} 条同类问题）` : "";
+  return INSTALL_PATH_PROMPT.replace("{pkg}", pkgName).replace("{paths}", shown + rest);
 }
 
 const SCRIPT_PATTERNS = [
@@ -220,8 +377,8 @@ const SCRIPT_PATTERNS = [
 ];
 
 function analyzeFiles(dataFiles, report, pkgName) {
-  const prefixes = allowedPrefixes(pkgName);
   let elfCount = 0, wrongArchElf = 0, totalSize = 0;
+  const badPaths = [];
   for (const f of dataFiles) {
     totalSize += f.size;
     if (f.path.includes("..")) {
@@ -250,12 +407,25 @@ function analyzeFiles(dataFiles, report, pkgName) {
         !f.linkname.startsWith("/usr/share/APPLaunch")) {
       report.push(["warn", `符号链接指向包外绝对路径: ${f.path} -> ${f.linkname}`]);
     }
-    if (f.type !== "dir") {
-      const ok = prefixes.some((p) => f.path.startsWith(p));
-      if (!ok) report.push(["warn", `非常规安装路径: ${f.path}`]);
+    // Blocking, not a warning: the packages-repo Action rejects these outright,
+    // so flagging them any softer would let the developer upload a package that
+    // is already doomed. Skipped without a package name, since nothing can then
+    // be judged as the package's own and the missing field is reported already.
+    if (f.type !== "dir" && pkgName) {
+      const issue = installPathIssue(f.path, pkgName);
+      if (issue) {
+        report.push(["danger", `安装路径不合规: ${f.path} —— ${issue}`]);
+        badPaths.push(f.path);
+      }
+    }
+    if (f.type === "file" && f.path.endsWith(".service")
+        && SERVICE_SCAN_DIRS.some((d) => f.path.startsWith(d))
+        && unitRunsAsRoot(new TextDecoder().decode(f.data))) {
+      report.push(["danger", `systemd 服务以 root 运行: ${f.path} —— `
+        + "应用不允许以 root 运行，请在 [Service] 段加 User=<非 root 用户> 或 DynamicUser=yes"]);
     }
   }
-  return { elfCount, wrongArchElf, totalSize };
+  return { elfCount, wrongArchElf, totalSize, badPaths };
 }
 
 /* --------------------------------- main ---------------------------------- */
@@ -349,6 +519,9 @@ export async function parseDeb(buffer, decompressors) {
     files: dataFiles.map(({ path, size, mode, type, linkname }) => ({ path, size, mode, type, linkname })),
     totalInstalledSize: stats.totalSize,
     report,
+    // Non-empty only when the install path policy rejected something, in which
+    // case the page offers the fix-it prompt for these paths.
+    badPaths: stats.badPaths,
     verdict: danger ? "danger" : warn ? "warn" : "pass",
   };
 }

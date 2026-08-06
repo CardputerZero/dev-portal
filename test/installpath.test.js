@@ -102,29 +102,24 @@ test("a unit is root unless it says otherwise", () => {
   assert.equal(unitRunsAsRoot(unit("# User=pi\n;User=pi")), true);
 });
 
-/** A marked block of the Action, dedented the way the YAML block scalar is. */
-function actionBlock(name) {
-  const workflow = readFileSync(
-    new URL("../packages-workflows/process-web-submission.yml", import.meta.url), "utf8");
-  // Leading blanks included, so the first line's indent counts toward the dedent.
-  const block = new RegExp(`[ \\t]*# ${name}:begin[\\s\\S]*?# ${name}:end`).exec(workflow);
-  assert.ok(block, `${name} block missing from process-web-submission.yml`);
-  const lines = block[0].split("\n");
-  const indent = Math.min(...lines.filter((l) => l.trim())
-    .map((l) => l.match(/^ */)[0].length));
-  return lines.map((l) => l.slice(indent)).join("\n");
-}
-
-/** Runs the Action's own policy code, so a drift between the two shows up here. */
+/**
+ * Runs the policy script both Actions call (the portal channel's
+ * process-web-submission.yml and the czdev channel's validate-pr.yml), so a
+ * drift between it and the browser's copy shows up here.
+ */
 function runActionPolicy(cases) {
-  const driver = `import re, sys\n${actionBlock("policy")}\n${actionBlock("prompt")}\n` +
-    'if sys.argv[1:] == ["prompt"]:\n' +
-    '    sys.stdout.write(PROMPT)\n' +
-    'else:\n' +
-    '    for line in sys.stdin.read().splitlines():\n' +
-    '        pkg, path = line.split("\\t", 1)\n' +
-    '        print(install_path_issue(path, pkg) or "")\n';
-  const file = join(mkdtempSync(join(tmpdir(), "policy-")), "policy.py");
+  const dir = new URL("../packages-workflows/", import.meta.url).pathname;
+  const driver = `import sys
+sys.path.insert(0, ${JSON.stringify(dir)})
+from install_path_policy import install_path_issue, PROMPT
+if sys.argv[1:] == ["prompt"]:
+    sys.stdout.write(PROMPT)
+else:
+    for line in sys.stdin.read().splitlines():
+        pkg, path = line.split("\\t", 1)
+        print(install_path_issue(path, pkg) or "")
+`;
+  const file = join(mkdtempSync(join(tmpdir(), "policy-")), "driver.py");
   writeFileSync(file, driver);
   const verdicts = execFileSync("python3", [file], {
     input: cases.map(([pkg, p]) => `${pkg}\t${p}`).join("\n"),
@@ -134,7 +129,7 @@ function runActionPolicy(cases) {
   return { verdicts, prompt };
 }
 
-test("the Action's Python copy of the policy agrees, verbatim", (t) => {
+test("the Actions' Python copy of the policy agrees, verbatim", (t) => {
   try {
     execFileSync("python3", ["-c", ""]);
   } catch {

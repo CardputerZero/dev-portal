@@ -3,8 +3,8 @@
 面向开发者的 AppStore 网页上传入口。开发者在浏览器里直接上传 `.deb`，
 页面**本地解析**出应用图标、包名、版本号、`.desktop` 声明、Maintainer 邮箱，
 生成初步安全报告；GitHub 登录校验邮箱真实性，包名**抢占式归属**（先提交者
-拥有该包名，之后只有同邮箱账号或管理员可以更新/下架）；自动化审核通过后
-自动生成发布 PR（可配置自动合并），APT 索引与商店 registry 随之更新。
+拥有该包名，之后只有同一 GitHub 账号或管理员可以更新/下架）；自动化审核通过
+后自动合并发布，APT 索引与商店 registry 随之更新，无需人工介入。
 
 > 本仓库是站点源码（Cloudflare Worker 架构，无数据库）。归属与版本状态
 > 直接以线上 APT 索引为准，天然免维护。
@@ -27,14 +27,28 @@ Cloudflare Worker（本仓库 worker/，静态页面同域托管）
   │    内存，上限由 Cloudflare 请求体限制而非 Worker 的 128 MB 内存决定
   │ ⑥ repository_dispatch: web-submission
   ▼
-CardputerZero/packages Actions（packages-workflows/ 里的两个 workflow）
+CardputerZero/packages Actions（`packages-workflows/` 是这些 workflow 的源）
   │ ⑦ dpkg-deb 权威校验：完整性 / control / .desktop / setuid / 设备文件 /
-  │    越权路径 / maintainer 脚本危险模式 / 邮箱归属 / 版本单调
+  │    安装路径策略 / maintainer 脚本危险模式 / 登录归属 / 版本单调
   │ ⑧ store 元数据：优先源码仓库 app-builder.json，否则从 deb 自动生成
-  │ ⑨ 通过 → 发布 PR（AUTO_MERGE=true 时自动合并）；失败 → issue @提交者
+  │ ⑨ 通过 → 发布 PR 并自动合并；失败 → issue @提交者，附规则说明与提示词
   ▼
 update-index.yml（已有）→ .deb 提升进 apt-pool → APT 索引/商店 JSON 更新
 ```
+
+另一条通道是命令行 `czdev publish`：把 `.deb` 传进开发者自己 fork 的
+Release，再提一个只改 `pool/main/` 的 fork PR。它经 `capture-to-staging.yml`
+把二进制镜像进本组织的 staging Release（fork 删库也不丢包），由
+`validate-pr.yml` 在只读沙箱里校验，`validate-pr-comment.yml` 在特权阶段发
+评论并**自动合并**。两条通道校验对等——安装路径策略是同一个
+`install_path_policy.py`，所以被拒时的说明和那段可交给 AI 的提示词逐字相同。
+
+自动合并的边界：只对 fork PR（同仓库 PR 是维护者改动，校验故意跳过），只在
+校验结论为成功时，且用 `--match-head-commit` 绑定被校验的那个 commit，校验与
+合并之间新推的 commit 无法搭车；PR 由事件里的 head 仓库/分支经 API 定位，不
+读不可信阶段写的 artifact。fork PR 只允许改 `pool/main/` 下的文件，否则夹带
+的 workflow 会在无人过目的情况下被合并；安装路径策略也从 base 分支取，避免
+fork 用自己改写的规则给自己打分。
 
 信任模型：浏览器解析只做**预览与提前拦截**（好体验）；一切以 Actions 里
 `dpkg-deb` 的服务端校验为准，客户端传来的任何字段都不会被直接采信。
@@ -84,9 +98,14 @@ Cloudflare Workers（不使用 Cloudflare 的 git 集成 / 自动拉取部署）
      `SESSION_SECRET`（可选：配置后每次部署自动同步到 Worker secrets；
      也可以本地 `wrangler secret put` 一次性设置）
 3. push `main`（或手动 workflow_dispatch）→ 自动部署。
-4. `packages-workflows/` 下的两个文件复制到 `CardputerZero/packages` 的
-   `.github/workflows/`（一次性）。想保留人工审核就把其中 `AUTO_MERGE`
-   改为 `"false"`（PR 仍会自动创建，由管理员合并）。
+4. `packages-workflows/` 下的文件复制到 `CardputerZero/packages`：`*.yml`
+   进 `.github/workflows/`，`install_path_policy.py` 进 `.github/scripts/`
+   （一次性）。想恢复人工审核，网页通道把 `AUTO_MERGE` 改为 `"false"`，
+   命令行通道删掉 `validate-pr-comment.yml` 里的 Merge 步骤；PR 仍会自动
+   创建，由管理员合并。
+5. 仓库 Settings → Actions 的 fork PR 审批策略需放宽到
+   `first_time_contributors_new_to_github`，否则首次贡献者的 PR 会卡在
+   "approve workflow" 上等人点。
 
 在 `worker/wrangler.toml` 的 `[vars] ADMIN_LOGINS` 里填管理员的 GitHub
 登录名（逗号分隔）。

@@ -690,17 +690,41 @@ async function collectStoreAssets(form, env, release, login, pkg) {
   const summary = String(form.get("summary") || "").trim();
   const description = String(form.get("description") || "").trim();
   const categoriesRaw = String(form.get("categories") || "").trim();
+  const displayName = String(form.get("display_name") || "").trim();
+  const license = String(form.get("license") || "").trim();
+  const shareCode = String(form.get("share_code") || "").trim().toUpperCase();
+  const permissionsRaw = String(form.get("permissions") || "").trim();
   const iconFile = form.get("icon");
   const hasIcon = iconFile && typeof iconFile.arrayBuffer === "function" && iconFile.size > 0;
   const shots = form.getAll("screenshots").filter((f) => f && typeof f.arrayBuffer === "function" && f.size > 0);
 
-  if (!(title || summary || description || categoriesRaw || hasIcon || shots.length)) return {};
+  if (!(title || summary || description || categoriesRaw || displayName || license
+        || shareCode || permissionsRaw || hasIcon || shots.length)) return {};
 
   const MAX_IMG = 512 * 1024;
   const categories = categoriesRaw
-    ? categoriesRaw.split(",").map((c) => c.trim()).filter(Boolean).slice(0, 6)
+    ? categoriesRaw.split(",").map((c) => c.trim()).filter(Boolean).slice(0, 2)
     : [];
+  if (shareCode && !/^[A-Z0-9]{4}$/.test(shareCode)) {
+    return { error: "bad_share_code", detail: "分享码必须是 4 位字母或数字" };
+  }
+  // Permissions arrive as a JSON object of booleans; anything malformed is
+  // dropped here and the CI-side policy reports the missing declaration.
+  let permissions = null;
+  if (permissionsRaw) {
+    try {
+      const p = JSON.parse(permissionsRaw);
+      if (p && typeof p === "object" && !Array.isArray(p)) {
+        permissions = {};
+        for (const [k, v] of Object.entries(p)) permissions[String(k)] = v === true;
+      }
+    } catch { /* ignored — CI reports it */ }
+  }
   const payload = { title, summary, description, categories, icon: null, screenshots: [] };
+  if (displayName) payload.display_name = displayName;
+  if (license) payload.license = license;
+  if (shareCode) payload.share_code = shareCode;
+  if (permissions) payload.permissions = permissions;
 
   if (shots.length > 6) return { error: "too_many_screenshots", detail: "最多 6 张截图" };
   let idx = 0;
@@ -722,7 +746,9 @@ async function collectStoreAssets(form, env, release, login, pkg) {
     if (b.byteLength > MAX_IMG) return { error: "icon_too_large", detail: "图标需 < 512KB" };
     const d = pngDims(new Uint8Array(b));
     if (!d) return { error: "icon_not_png", detail: "图标必须是 PNG" };
-    if (d.w !== d.h || d.w > 512) return { error: "icon_bad_size", detail: "图标必须是正方形 PNG（≤512×512）" };
+    if (d.w !== d.h || d.w < 128 || d.w > 512) {
+      return { error: "icon_bad_size", detail: "图标必须是正方形 PNG（128~512，推荐 256×256）" };
+    }
     const up = await uploadImageAsset(env, release, `${login}__${pkg}__icon.png`, b);
     payload.icon = { name: `${pkg}_icon.png`, url: up.url, sha256: up.sha256 };
   }

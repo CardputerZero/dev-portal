@@ -31,6 +31,22 @@ const loadBz2 = () => lazyImport("/vendor/bz2.js", (m) => m.decompress);
 const loadLzma = () => lazyImport("/vendor/lzma-d.js", (m) => m.LZMA);
 
 const INDEX_URL = "https://cardputer.cc/packages/dists/stable/main/binary-arm64/Packages";
+// The live store registry — used to prefill the form when updating a published
+// package and to warn about share-code collisions before submitting.
+const REGISTRY_URL = "https://cardputer.cc/generated/registry.json";
+
+// Canonical category enum (CP0_dev.md). Shown untranslated: these exact
+// strings are what the device store displays and what CI validates.
+const CATEGORIES = [
+  "System Tools", "Development", "Hardware & IoT", "Security",
+  "Radio & Comms", "AI", "Creative & Office", "Media", "Games",
+  "Emulators", "Education", "Lifestyle", "Other",
+];
+// The seven declared permission keys, in display order.
+const PERMISSIONS = [
+  "camera", "microphone", "imu", "network",
+  "additional_hardware", "background_service", "external_display",
+];
 
 // The upload is a three-step handshake (see worker/): /api/submit/prepare
 // mints a signed ticket, the ticket authorizes streaming the bytes to
@@ -101,6 +117,11 @@ function applyStaticI18n() {
 // Re-apply everything after a language switch (static chrome + dynamic views).
 function relocalize() {
   applyStaticI18n();
+  // Permission chip labels are built dynamically; retranslate without
+  // touching the checked state.
+  document.querySelectorAll("#s-perms label").forEach((label) => {
+    label.lastChild.textContent = t(`form.perm.${label.dataset.perm}`);
+  });
   if (me) $("who").textContent = me.login + (me.is_admin ? t("header.admin") : "");
   if (parsed && file) renderPreview();
   if (!$("mine-panel").classList.contains("hidden")) renderMine();
@@ -178,6 +199,7 @@ async function init() {
   const configP = fetch("/api/config").then((r) => (r.ok ? r.json() : null)).catch(() => null);
   dict = await loadLocale(locale);
   applyStaticI18n();
+  buildStoreChoices();
 
   const sel = $("locale-select");
   if (sel) {
@@ -406,7 +428,7 @@ async function renderPreview() {
   // 版本 / 包名占用预检（所有权按上传者 GitHub 账号先到先得）
   const [idx, owners] = await Promise.all([loadIndex(), loadOwners()]);
   const entries = idx.get(c.Package) || [];
-  let verState = "", verOk = true;
+  let verState = "", verOk = true, ownedUpdate = false;
   if (!entries.length) {
     verState = `<span class="lv-pass">${me ? t("preview.newPkg", { login: me.login }) : t("preview.newPkgAnon")}</span>`;
   } else {
@@ -423,9 +445,16 @@ async function renderPreview() {
       verState = `<span class="lv-danger">${t("preview.versionTooLow", { version: c.Version, latest })}</span>`;
     } else {
       verState = `<span class="lv-pass">${t("preview.versionUpdate", { latest, version: c.Version })}</span>`;
+      ownedUpdate = true;
     }
   }
   $("p-verstate").innerHTML = verState;
+
+  // Updating an owned, published package: start the form from the current
+  // store page (fields + screenshots + icon) instead of a blank slate.
+  if (ownedUpdate && !storeShots.length && !$("s-title").value) {
+    prefillStore(c.Package).catch(() => { /* registry unreachable */ });
+  }
 
   // 检查报告
   const ul = $("report-list");
@@ -469,8 +498,81 @@ async function renderPreview() {
 
 /* ---------------------------- store metadata form ------------------------ */
 
-let storeIcon = null;     // Blob | null — optional icon override (square PNG)
+let storeIcon = null;     // Blob | null — icon override (square PNG)
 const storeShots = [];    // [{ blob, url }] — 320×170 PNG screenshots
+let registryCache = null; // parsed registry.json, for prefill + code checks
+let prefilledIcon = false; // true when the shown icon came from the registry
+
+async function loadRegistry() {
+  if (registryCache) return registryCache;
+  try {
+    const r = await fetch(`${REGISTRY_URL}?t=${Date.now()}`);
+    if (r.ok) registryCache = await r.json();
+  } catch { /* registry unreachable — prefill and code checks degrade */ }
+  return registryCache;
+}
+
+// Build the category chips and permission toggles once at startup. Category
+// selection is capped at 2 by disabling the rest, matching the store policy.
+function buildStoreChoices() {
+  const cats = $("s-cats");
+  cats.innerHTML = "";
+  for (const c of CATEGORIES) {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = c;
+    input.addEventListener("change", enforceCategoryLimit);
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(c));
+    cats.appendChild(label);
+  }
+  const perms = $("s-perms");
+  perms.innerHTML = "";
+  for (const p of PERMISSIONS) {
+    const label = document.createElement("label");
+    label.dataset.perm = p;
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = p;
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(t(`form.perm.${p}`)));
+    perms.appendChild(label);
+  }
+}
+
+function enforceCategoryLimit() {
+  const boxes = [...$("s-cats").querySelectorAll("input")];
+  const picked = boxes.filter((b) => b.checked).length;
+  for (const b of boxes) b.disabled = !b.checked && picked >= 2;
+}
+
+function selectedCategories() {
+  return [...$("s-cats").querySelectorAll("input:checked")].map((b) => b.value);
+}
+
+function selectedPermissions() {
+  const out = {};
+  for (const p of PERMISSIONS) out[p] = false;
+  for (const b of $("s-perms").querySelectorAll("input:checked")) out[b.value] = true;
+  return out;
+}
+
+// Live share-code feedback against the registry (CI enforces authoritatively).
+$("s-code").addEventListener("input", async () => {
+  const el = $("s-code");
+  el.value = el.value.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 4);
+  const state = $("s-code-state");
+  if (el.value.length < 4) { state.textContent = ""; return; }
+  const reg = await loadRegistry();
+  if (!reg || !parsed) return;
+  const mine = parsed.control.Package;
+  const clash = (reg.apps || []).find((a) => a.download && a.download.package !== mine
+    && String(a.share_code || "").toUpperCase() === el.value);
+  state.innerHTML = clash
+    ? `<span class="lv-danger">${t("form.codeTaken", { pkg: clash.download.package })}</span>`
+    : `<span class="lv-pass">${t("form.codeFree")}</span>`;
+});
 
 // Draw an image into a w×h canvas using "cover" fit (scale to fill, then
 // center-crop) and return a PNG blob. This is how the browser turns an
@@ -497,9 +599,14 @@ function fileToImage(f) {
 
 function resetStoreForm() {
   storeIcon = null;
+  prefilledIcon = false;
   for (const sh of storeShots) URL.revokeObjectURL(sh.url);
   storeShots.length = 0;
-  for (const id of ["s-title", "s-summary", "s-desc", "s-cats"]) $(id).value = "";
+  for (const id of ["s-title", "s-summary", "s-desc", "s-author", "s-license", "s-code"]) $(id).value = "";
+  $("s-code-state").textContent = "";
+  $("s-prefill-note").classList.add("hidden");
+  for (const b of $("s-cats").querySelectorAll("input")) { b.checked = false; b.disabled = false; }
+  for (const b of $("s-perms").querySelectorAll("input")) b.checked = false;
   $("s-icon-preview").classList.add("hidden");
   $("s-icon-preview").removeAttribute("src");
   $("s-icon-clear").classList.add("hidden");
@@ -512,7 +619,10 @@ function renderShots() {
   storeShots.forEach((sh, i) => {
     const div = document.createElement("div");
     div.className = "shot";
-    div.innerHTML = `<img alt="${t("form.shotAlt", { n: i + 1 })}"><button type="button" data-i="${i}">✕</button>`;
+    div.innerHTML = `<img alt="${t("form.shotAlt", { n: i + 1 })}">`
+      + `<button type="button" class="del" data-del="${i}">✕</button>`
+      + (i > 0 ? `<button type="button" class="mvl" data-mvl="${i}" title="${t("form.moveLeft")}">←</button>` : "")
+      + (i < storeShots.length - 1 ? `<button type="button" class="mvr" data-mvr="${i}" title="${t("form.moveRight")}">→</button>` : "");
     div.querySelector("img").src = sh.url;
     box.appendChild(div);
   });
@@ -521,12 +631,91 @@ function renderShots() {
 }
 
 $("s-shots").addEventListener("click", (e) => {
-  const i = e.target.getAttribute && e.target.getAttribute("data-i");
-  if (i === null || i === undefined) return;
-  const [removed] = storeShots.splice(Number(i), 1);
-  if (removed) URL.revokeObjectURL(removed.url);
+  const el = e.target;
+  if (!el.getAttribute) return;
+  const del = el.getAttribute("data-del");
+  if (del !== null) {
+    const [removed] = storeShots.splice(Number(del), 1);
+    if (removed) URL.revokeObjectURL(removed.url);
+    return renderShots();
+  }
+  const mvl = el.getAttribute("data-mvl");
+  const mvr = el.getAttribute("data-mvr");
+  const i = mvl !== null ? Number(mvl) : (mvr !== null ? Number(mvr) : null);
+  if (i === null) return;
+  const j = mvl !== null ? i - 1 : i + 1;
+  [storeShots[i], storeShots[j]] = [storeShots[j], storeShots[i]];
   renderShots();
 });
+
+/**
+ * Prefill the store form from the live registry when the developer is
+ * updating their own published package: every field plus the published
+ * screenshots and icon (fetched back into editable blobs), so an update
+ * starts from the current store page instead of a blank form.
+ */
+async function prefillStore(pkg) {
+  const reg = await loadRegistry();
+  const app = reg && (reg.apps || []).find((a) => a.download && a.download.package === pkg);
+  if (!app) return;
+  $("s-title").value = app.title || "";
+  $("s-summary").value = app.summary || "";
+  $("s-desc").value = app.description || "";
+  $("s-author").value = (app.author && app.author.display_name) || "";
+  $("s-license").value = app.license || "";
+  $("s-code").value = String(app.share_code || "").toUpperCase();
+  if (!$("source-repo").value && app.source_repo) $("source-repo").value = app.source_repo;
+  for (const b of $("s-cats").querySelectorAll("input")) {
+    b.checked = (app.categories || []).includes(b.value);
+  }
+  enforceCategoryLimit();
+  const perms = app.permissions || {};
+  for (const b of $("s-perms").querySelectorAll("input")) b.checked = perms[b.value] === true;
+
+  // Published images, refetched as editable blobs. Failures degrade to an
+  // empty slot — the developer can re-add images by hand.
+  const fetchBlob = async (url) => {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return await r.blob();
+    } catch { /* unreachable asset */ }
+    return null;
+  };
+  for (const url of (app.screenshots || []).slice(0, 6)) {
+    if (storeShots.length >= 6) break;
+    const blob = await fetchBlob(url);
+    if (!blob) continue;
+    try {
+      // Legacy screenshots may be off-size (e.g. 640×340); normalize them to
+      // the policy's 320×170 here so an untouched update passes validation.
+      const img = await fileToImage(blob);
+      const fixed = (img.naturalWidth === 320 && img.naturalHeight === 170)
+        ? blob : await coverToPng(img, 320, 170);
+      storeShots.push({ blob: fixed, url: URL.createObjectURL(fixed) });
+    } catch { /* unreadable screenshot — skip */ }
+  }
+  renderShots();
+  if (app.icon) {
+    const blob = await fetchBlob(app.icon);
+    // Only prefill an icon the current policy would accept (square, 128–512);
+    // a legacy undersized icon is left out so the developer picks a new one
+    // instead of getting rejected by CI for an image they never touched.
+    if (blob) {
+      try {
+        const img = await fileToImage(blob);
+        if (img.naturalWidth === img.naturalHeight
+            && img.naturalWidth >= 128 && img.naturalWidth <= 512) {
+          storeIcon = blob;
+          prefilledIcon = true;
+          $("s-icon-preview").src = URL.createObjectURL(blob);
+          $("s-icon-preview").classList.remove("hidden");
+          $("s-icon-clear").classList.remove("hidden");
+        }
+      } catch { /* unreadable icon — leave the slot empty */ }
+    }
+  }
+  $("s-prefill-note").classList.remove("hidden");
+}
 
 $("s-shot-btn").addEventListener("click", () => $("s-shot-file").click());
 $("s-shot-file").addEventListener("change", async (e) => {
@@ -543,6 +732,7 @@ $("s-shot-file").addEventListener("change", async (e) => {
 $("s-icon-btn").addEventListener("click", () => $("s-icon").click());
 $("s-icon-clear").addEventListener("click", () => {
   storeIcon = null;
+  prefilledIcon = false;
   $("s-icon-preview").classList.add("hidden");
   $("s-icon-preview").removeAttribute("src");
   $("s-icon-clear").classList.add("hidden");
@@ -552,7 +742,8 @@ $("s-icon").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!f) return;
   try {
-    storeIcon = await coverToPng(await fileToImage(f), 128, 128);
+    storeIcon = await coverToPng(await fileToImage(f), 256, 256);
+    prefilledIcon = false;
     $("s-icon-preview").src = URL.createObjectURL(storeIcon);
     $("s-icon-preview").classList.remove("hidden");
     $("s-icon-clear").classList.remove("hidden");
@@ -561,8 +752,28 @@ $("s-icon").addEventListener("change", async (e) => {
 
 /* --------------------------------- submit -------------------------------- */
 
+// The store policy's required fields, checked here so a rejection costs no
+// upload time; CI re-validates authoritatively with the same rules.
+function missingStoreFields() {
+  const missing = [];
+  if (!$("s-title").value.trim()) missing.push(t("form.appName"));
+  if (!$("s-summary").value.trim()) missing.push(t("form.summary"));
+  if (!selectedCategories().length) missing.push(t("form.categories"));
+  if (!$("s-author").value.trim()) missing.push(t("form.authorName"));
+  if (!$("s-license").value.trim()) missing.push(t("form.license"));
+  if (!/^[A-Za-z0-9]{4}$/.test($("s-code").value.trim())) missing.push(t("form.shareCode"));
+  if (!storeShots.length) missing.push(t("form.screenshotsLabel"));
+  if (!storeIcon && !(parsed && parsed.icon && parsed.icon.isPng)) missing.push(t("form.iconLabel"));
+  return missing;
+}
+
 $("submit-btn").addEventListener("click", async () => {
   if (!file || !parsed) return;
+
+  const missing = missingStoreFields();
+  if (missing.length) {
+    return say("err", t("form.missingRequired", { fields: missing.join("、") }));
+  }
   $("submit-btn").disabled = true;
 
   const repo = $("source-repo").value.trim();
@@ -594,7 +805,11 @@ $("submit-btn").addEventListener("click", async () => {
     body.append("title", $("s-title").value.trim());
     body.append("summary", $("s-summary").value.trim());
     body.append("description", $("s-desc").value.trim());
-    body.append("categories", $("s-cats").value.trim());
+    body.append("categories", selectedCategories().join(","));
+    body.append("display_name", $("s-author").value.trim());
+    body.append("license", $("s-license").value.trim());
+    body.append("share_code", $("s-code").value.trim().toUpperCase());
+    body.append("permissions", JSON.stringify(selectedPermissions()));
     if (storeIcon) body.append("icon", storeIcon, "icon.png");
     storeShots.forEach((sh, i) => body.append("screenshots", sh.blob, `shot${i}.png`));
 

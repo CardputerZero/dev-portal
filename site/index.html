@@ -59,9 +59,20 @@
     .shot { position: relative; line-height: 0; }
     .shot img { width: 160px; height: 85px; border: 1px solid var(--line); border-radius: 6px;
       background: #000; object-fit: cover; image-rendering: pixelated; }
-    .shot button { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,.7);
-      border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; font-size: 11px;
+    .shot button { position: absolute; background: rgba(0,0,0,.7);
+      border: 1px solid var(--line); color: var(--dim); border-radius: 4px; font-size: 11px;
       line-height: 1.4; padding: 1px 6px; cursor: pointer; }
+    .shot button.del { top: 4px; right: 4px; border-color: var(--danger); color: var(--danger); }
+    .shot button.mvl { bottom: 4px; left: 4px; }
+    .shot button.mvr { bottom: 4px; left: 34px; }
+    .cat-grid, .perm-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+    .cat-grid label, .perm-grid label { display: inline-flex; align-items: center; gap: 6px;
+      margin: 0; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px;
+      font-size: 12.5px; color: var(--dim); cursor: pointer; user-select: none; }
+    .cat-grid label:has(input:checked), .perm-grid label:has(input:checked) {
+      border-color: var(--accent); color: var(--text); }
+    .cat-grid input, .perm-grid input { width: auto; margin: 0; accent-color: var(--accent); }
+    .cat-grid label:has(input:disabled) { opacity: .4; cursor: not-allowed; }
     .drop {
       border: 1.5px dashed var(--line); border-radius: 8px; padding: 30px 16px;
       text-align: center; color: var(--dim); cursor: pointer; transition: border-color .15s;
@@ -200,21 +211,43 @@
           <input id="source-repo" type="url" placeholder="https://github.com/you/your-app">
 
           <fieldset class="store-fieldset">
-            <legend data-i18n="form.storeLegend">商店信息（可选，填了会覆盖源码仓库/deb 自动带入的信息）</legend>
+            <legend data-i18n="form.storeLegend">商店信息（必填；更新已发布的包时会自动带入线上信息，可修改）</legend>
+            <p class="muted hidden" id="s-prefill-note" data-i18n="form.prefillNote">已带入该包当前在商店的信息和截图，直接编辑后提交即可。</p>
 
-            <label for="s-title" data-i18n="form.appName">应用名称</label>
+            <label for="s-title" data-i18n="form.appName">应用名称（全商店唯一）</label>
             <input id="s-title" type="text" data-i18n-ph="preview.titlePlaceholder" placeholder="显示在 AppStore 里的名字">
 
             <label for="s-summary" data-i18n="form.summary">一句话简介</label>
             <input id="s-summary" type="text" maxlength="80" data-i18n-ph="form.summaryPlaceholder" placeholder="80 字以内">
 
-            <label for="s-desc" data-i18n="form.description">详细描述</label>
+            <label for="s-desc" data-i18n="form.description">详细描述（建议填写）</label>
             <textarea id="s-desc" rows="4" data-i18n-ph="form.descPlaceholder" placeholder="支持多行"></textarea>
 
-            <label for="s-cats" data-i18n="form.categories">分类（逗号分隔，最多 6 个）</label>
-            <input id="s-cats" type="text" placeholder="Games, Emulators">
+            <label data-i18n="form.categories">分类（从下列选 1~2 个）</label>
+            <div id="s-cats" class="cat-grid"></div>
 
-            <label data-i18n="form.iconLabel">图标（可选，正方形 PNG；留空则用 deb 内图标）</label>
+            <label for="s-author" data-i18n="form.authorName">作者显示名（商店列表和详情页展示）</label>
+            <input id="s-author" type="text" maxlength="40" data-i18n-ph="form.authorPlaceholder" placeholder="你的名字或昵称">
+
+            <label for="s-license" data-i18n="form.license">许可证</label>
+            <input id="s-license" type="text" list="license-list" placeholder="MIT">
+            <datalist id="license-list">
+              <option value="MIT"></option><option value="Apache-2.0"></option>
+              <option value="GPL-3.0"></option><option value="GPL-2.0"></option>
+              <option value="BSD-3-Clause"></option><option value="BSD-2-Clause"></option>
+              <option value="MPL-2.0"></option><option value="LGPL-3.0"></option>
+              <option value="AGPL-3.0"></option><option value="Unlicense"></option>
+              <option value="CC0-1.0"></option><option value="Proprietary"></option>
+            </datalist>
+
+            <label for="s-code" data-i18n="form.shareCode">分享码（4 位字母/数字，全商店唯一；用户在设备上输入它直达你的应用）</label>
+            <input id="s-code" type="text" maxlength="4" style="width:8em;text-transform:uppercase" placeholder="MYAP" autocomplete="off">
+            <span class="dim" id="s-code-state"></span>
+
+            <label data-i18n="form.permissions">权限与运行要求声明（如实勾选，会展示在商店页面）</label>
+            <div id="s-perms" class="perm-grid"></div>
+
+            <label data-i18n="form.iconLabel">图标（正方形 PNG，自动裁剪为 256×256；更新时默认沿用线上图标）</label>
             <div class="img-row">
               <img id="s-icon-preview" class="icon-thumb hidden" alt="icon 预览">
               <input id="s-icon" type="file" accept="image/png,image/jpeg,image/webp" class="hidden">
@@ -222,7 +255,7 @@
               <button type="button" class="ghost hidden" id="s-icon-clear" data-i18n="form.removeIcon">移除</button>
             </div>
 
-            <label data-i18n="form.screenshotsLabel">应用截图（320×170，选图后自动裁剪缩放；最多 6 张）</label>
+            <label data-i18n="form.screenshotsLabel">应用截图（320×170，选图后自动裁剪缩放；1~6 张，可拖动排序）</label>
             <div id="s-shots" class="shots"></div>
             <input id="s-shot-file" type="file" accept="image/png,image/jpeg,image/webp" class="hidden">
             <button type="button" class="ghost" id="s-shot-btn" data-i18n="form.addShot">+ 添加截图</button>

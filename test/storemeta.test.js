@@ -51,7 +51,7 @@ function goodMeta() {
  * `packages` maps pkg name -> meta object (goodMeta-shaped); PNG files are
  * generated to match unless `broken` names paths to corrupt or drop.
  */
-function runPolicy(pkg, packages, { skipPool = false, broken = [] } = {}) {
+function runPolicy(pkg, packages, { skipPool = false, broken = [], maintainer = "" } = {}) {
   const root = mkdtempSync(join(tmpdir(), "storemeta-"));
   const pool = join(root, "pool");
   for (const [name, meta] of Object.entries(packages)) {
@@ -73,7 +73,8 @@ function runPolicy(pkg, packages, { skipPool = false, broken = [] } = {}) {
     else writeFileSync(p, content);
   }
   const [err, warn, help] = ["err.txt", "warn.txt", "help.md"].map((f) => join(root, f));
-  execFileSync("python3", [SCRIPT, pkg, join(pool, pkg), skipPool ? "-" : pool, err, warn, help]);
+  execFileSync("python3", [SCRIPT, pkg, join(pool, pkg), skipPool ? "-" : pool, err, warn, help],
+    { env: { ...process.env, DEB_MAINTAINER: maintainer } });
   const read = (p) => (existsSync(p) ? readFileSync(p, "utf8") : "");
   return { errors: read(err), warnings: read(warn), help: read(help) };
 }
@@ -191,4 +192,42 @@ test("a rejection hands over the rules and an AI prompt naming the problems", ()
 test("a package without meta.json is a single clear error", () => {
   const r = runPolicy("fontpreview", {}, { skipPool: true });
   assert.match(r.errors, /缺少 meta\.json/);
+});
+
+test("unedited template placeholders are auto-rejected", () => {
+  const cases = [
+    [(m) => { m.title = "Template"; }, /title 还是模板占位内容/],
+    [(m) => { m.title = "TODO: My Great App"; }, /title 还是模板占位内容/],
+    [(m) => { m.summary = "TODO: one line about your app"; }, /summary 还是模板占位内容/],
+    [(m) => { m.summary = "Template Application for CardputerZero"; }, /summary 还是模板占位内容/],
+    [(m) => { m.license = "TODO: an SPDX id, e.g. MIT"; }, /license 还是模板占位内容/],
+    [(m) => { m.author.display_name = "M5Stack"; }, /author\.display_name 还是模板占位内容/],
+    [(m) => { m.author.display_name = "Your Name"; }, /author\.display_name 还是模板占位内容/],
+    [(m) => { m.author.email = "support@m5stack.com"; }, /author\.email 还是模板占位邮箱/],
+    [(m) => { m.share_code = "TEMP"; }, /share_code 'TEMP' 是模板占位值/],
+    [(m) => { m.share_code = "todo"; }, /share_code 'todo' 是模板占位值/],
+    [(m) => { m.source_repo = "https://github.com/CardputerZero/Template"; },
+      /source_repo 还指向模板仓库/],
+  ];
+  for (const [mutate, want] of cases) {
+    const meta = goodMeta();
+    mutate(meta);
+    const r = runPolicy("fontpreview", { fontpreview: meta });
+    assert.match(r.errors, want, `case: ${mutate}`);
+  }
+});
+
+test("a placeholder deb Maintainer is rejected; a real one passes", () => {
+  for (const bad of [
+    "m5stack <m5stack@m5stack.com>",
+    "M5Stack <support@m5stack.com>",
+    "TODO Your Name <todo@example.invalid>",
+  ]) {
+    const r = runPolicy("fontpreview", { fontpreview: goodMeta() }, { maintainer: bad });
+    assert.match(r.errors, /Maintainer 还是模板占位值/, `maintainer: ${bad}`);
+    assert.match(r.errors, /APP_MAINTAINER/);
+  }
+  const ok = runPolicy("fontpreview", { fontpreview: goodMeta() },
+    { maintainer: "Alice Chen <12345+alice@users.noreply.github.com>" });
+  assert.equal(ok.errors, "");
 });

@@ -242,18 +242,18 @@ function namedAfterPackage(name, pkgName) {
  */
 export function installPathIssue(path, pkgName) {
   if (path.startsWith("usr/local/")) {
-    return "Debian Policy 9.1.2 禁止软件包写入 /usr/local（那是留给系统管理员的）";
+    return "Debian Policy 9.1.2 forbids packages installing into /usr/local (reserved for the sysadmin) / Debian Policy 9.1.2 禁止软件包写入 /usr/local（那是留给系统管理员的）";
   }
   const systemdDir = SYSTEMD_DIRS.find((d) => path.startsWith(d));
   if (systemdDir) {
     const unit = path.slice(systemdDir.length);
-    if (unit.includes("/")) return "systemd 服务目录下不应再有子目录";
+    if (unit.includes("/")) return "no subdirectories under the systemd unit directory / systemd 服务目录下不应再有子目录";
     return namedAfterPackage(unit, pkgName)
       ? null
-      : `systemd 服务名必须与包名 ${pkgName} 相关，避免覆盖系统服务`;
+      : `systemd unit name must relate to the package name ${pkgName} (avoids shadowing system services) / systemd 服务名必须与包名 ${pkgName} 相关，避免覆盖系统服务`;
   }
   if (ALIASED_ROOTS.some((r) => path.startsWith(r))) {
-    return "Debian Policy 10.1 禁止软件包写入 /bin /sbin /lib 等 usr-merge 别名路径，请改用 /usr 下的对应位置";
+    return "Debian Policy 10.1 forbids /bin /sbin /lib etc. (usr-merge alias paths); use the /usr equivalent / Debian Policy 10.1 禁止软件包写入 /bin /sbin /lib 等 usr-merge 别名路径，请改用 /usr 下的对应位置";
   }
   if (path.startsWith("usr/share/APPLaunch/") || path.startsWith("usr/share/doc/")) return null;
   // /etc/<pkg>.conf is as much a Debian convention as /etc/<pkg>/ (compare
@@ -263,27 +263,27 @@ export function installPathIssue(path, pkgName) {
     const top = rest.includes("/") ? rest.slice(0, rest.indexOf("/")) : rest;
     return namedAfterPackage(top, pkgName)
       ? null
-      : `etc/ 下只能放与包名 ${pkgName} 相关的配置文件或目录，${top} 不符合`;
+      : `etc/ may only hold config named after the package ${pkgName}; ${top} does not match / etc/ 下只能放与包名 ${pkgName} 相关的配置文件或目录，${top} 不符合`;
   }
   if (path.startsWith("usr/bin/")) {
     const exe = path.slice("usr/bin/".length);
     if (exe.includes("/")) {
-      return "/usr/bin 下不应有子目录，程序数据请放 usr/share/<包名>/ 或 usr/lib/<包名>/";
+      return "no subdirectories under /usr/bin; put app data in usr/share/<pkg>/ or usr/lib/<pkg>/ / /usr/bin 下不应有子目录，程序数据请放 usr/share/<包名>/ 或 usr/lib/<包名>/";
     }
     return namedAfterPackage(exe, pkgName)
       ? null
-      : `/usr/bin 下的文件名必须与包名 ${pkgName} 相关，避免覆盖系统命令`;
+      : `the filename under /usr/bin must relate to the package name ${pkgName} (avoids shadowing system commands) / /usr/bin 下的文件名必须与包名 ${pkgName} 相关，避免覆盖系统命令`;
   }
   const root = PKG_DIR_ROOTS.find((r) => path.startsWith(r));
   if (root) {
     const rest = path.slice(root.length);
-    if (!rest.includes("/")) return `不能直接放在 ${root} 下，请放进 ${root}<包名>/ 子目录`;
+    if (!rest.includes("/")) return `files must not sit directly under ${root}; use a ${root}<pkg>/ subdirectory / 不能直接放在 ${root} 下，请放进 ${root}<包名>/ 子目录`;
     const top = rest.slice(0, rest.indexOf("/"));
     return namedAfterPackage(top, pkgName)
       ? null
-      : `${root}${top}/ 的目录名必须与包名 ${pkgName} 相关`;
+      : `the directory name ${root}${top}/ must relate to the package name ${pkgName} / ${root}${top}/ 的目录名必须与包名 ${pkgName} 相关`;
   }
-  return `不在允许的安装位置内（${ALLOWED_SUMMARY}）`;
+  return `not an allowed install location / 不在允许的安装位置内（${ALLOWED_SUMMARY}）`;
 }
 
 /**
@@ -323,7 +323,8 @@ const INSTALL_PATH_PROMPT = `我在给 CardputerZero AppStore 打一个 Debian �
 这次被拒绝的路径：
 {paths}
 
-请告诉我具体要改哪些文件、改成什么，以及资源路径在源码里怎么同步修改。`;
+请告诉我具体要改哪些文件、改成什么，以及资源路径在源码里怎么同步修改。
+(Assistant: reply in the same language the user speaks to you.)`;
 
 // Where the Action looks for system units, etc/systemd/system included even
 // though the path policy rejects it — a unit there still runs as root.

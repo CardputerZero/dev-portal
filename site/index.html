@@ -177,6 +177,15 @@
         </div>
 
         <div id="preview-box" class="hidden">
+          <!-- Store listing only (from "My packages"): no .deb, the version and
+               binary stay as published. -->
+          <div class="report hidden" id="listing-banner">
+            <b id="listing-title"></b>
+            <p class="dim" data-i18n="listing.note">只更新商店里的名称、介绍、分类、截图和图标，不需要上传 .deb，已发布的版本保持不变。通过校验后会自动合并。</p>
+            <button type="button" class="ghost" id="listing-cancel" data-i18n="listing.cancel">取消</button>
+          </div>
+
+          <div id="deb-only">
           <div class="preview">
             <img id="p-icon" class="hidden" alt="app icon">
             <div id="p-noicon" class="noicon" data-i18n="preview.noIcon">无图标</div>
@@ -198,7 +207,7 @@
                rule, plus a prompt that gets an assistant to fix the packaging. -->
           <div class="report hidden" id="p-pathhelp-box">
             <b data-i18n="pathHelp.title">安装路径不合规，怎么改？</b>
-            <p class="dim" data-i18n="pathHelp.rule">我们放行 Debian 的标准位置，只要求落在共享目录里的文件名/目录名带上你的包名，这样一个应用不会悄悄覆盖系统命令或别人的文件。比对时忽略 - _ . 的差异，所以包名 fontpreview 用 font_preview 目录是可以的。</p>
+            <p class="dim" data-i18n="pathHelp.rule">我们放行 Debian 的标准位置，只要求落在共享目录里的文件名/目录名以你的包名开头，这样一个应用不会悄悄覆盖系统命令或别人的文件。比对时忽略 - _ . 的差异，所以包名 fontpreview 用 font_preview 目录是可以的。</p>
             <p class="dim" data-i18n="pathHelp.hint">把下面整段复制给 AI（Cursor / Claude / ChatGPT），它带着完整规则和你这次被拒的路径，可以直接帮你改打包脚本：</p>
             <button type="button" class="ghost" id="p-pathhelp-copy" data-i18n="pathHelp.copy">复制提示词</button>
             <details><summary data-i18n="pathHelp.show">查看提示词全文</summary><pre id="p-pathhelp-prompt"></pre></details>
@@ -209,6 +218,7 @@
 
           <label for="source-repo" data-i18n="form.sourceRepoLabel">源码仓库（可选，公开仓库；含 app-builder.json 的 store 段可自动带入截图等商店信息）</label>
           <input id="source-repo" type="url" placeholder="https://github.com/you/your-app">
+          </div>
 
           <fieldset class="store-fieldset">
             <legend data-i18n="form.storeLegend">商店信息（必填；更新已发布的包时会自动带入线上信息，可修改）</legend>
@@ -261,7 +271,7 @@
             <button type="button" class="ghost" id="s-shot-btn" data-i18n="form.addShot">+ 添加截图</button>
           </fieldset>
 
-          <label class="checkbox-row">
+          <label class="checkbox-row" id="hide-email-row">
             <input type="checkbox" id="hide-email" checked>
             <span data-i18n="form.hideEmail">不公开显示我的邮箱地址（仅用于身份记录，默认隐藏；取消勾选则公开你的 GitHub 邮箱）</span>
           </label>

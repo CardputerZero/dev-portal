@@ -59,7 +59,7 @@
   },
   "pathHelp": {
     "title": "安装路径不合规，怎么改？",
-    "rule": "我们放行 Debian 的标准位置，只要求落在共享目录里的文件名/目录名带上你的包名，这样一个应用不会悄悄覆盖系统命令或别人的文件。比对时忽略 - _ . 的差异，所以包名 fontpreview 用 font_preview 目录是可以的。",
+    "rule": "我们放行 Debian 的标准位置，只要求落在共享目录里的文件名/目录名以你的包名开头，这样一个应用不会悄悄覆盖系统命令或别人的文件。比对时忽略 - _ . 的差异，所以包名 fontpreview 用 font_preview 目录是可以的。",
     "hint": "把下面整段复制给 AI（Cursor / Claude / ChatGPT），它带着完整规则和你这次被拒的路径，可以直接帮你改打包脚本：",
     "copy": "复制提示词",
     "show": "查看提示词全文",
@@ -122,9 +122,17 @@
     "unpublishFailed": "下架失败：{msg}",
     "statusReview": "审核中",
     "statusPublishing": "已合并，索引更新中…",
-    "viewPr": "查看 PR"
+    "viewPr": "查看 PR",
+    "editListing": "editListing"
   },
   "decompress": {
     "loadFailed": "无法加载 {what} 解压组件（仅用于本地预览），请刷新重试；仍可直接提交，服务器会完成校验"
+  },
+  "listing": {
+    "title": "编辑 {pkg} 的商店信息",
+    "note": "只更新商店里的名称、介绍、分类、截图和图标，不需要上传 .deb，已发布的版本保持不变。通过校验后会自动合并。",
+    "cancel": "取消",
+    "submit": "提交商店信息更新",
+    "submitting": "正在提交商店信息…"
   }
 }

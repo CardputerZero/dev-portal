@@ -25,7 +25,7 @@ Cloudflare Worker（本仓库 worker/，静态页面同域托管）
   │    因此包名被占或版本倒退在传字节之前就被挡住
   │ ⑤ .deb 流式转发进 packages 仓库 staging Release（BOT_TOKEN），全程不落
   │    内存，上限由 Cloudflare 请求体限制而非 Worker 的 128 MB 内存决定
-  │ ⑥ repository_dispatch: web-submission
+  │ ⑥ repository_dispatch: web-submission（只改商店信息时为 web-listing-update）
   ▼
 CardputerZero/packages Actions（`packages-workflows/` 是这些 workflow 的源）
   │ ⑦ dpkg-deb 权威校验：完整性 / control / .desktop / setuid / 设备文件 /
@@ -62,14 +62,56 @@ fork 用自己改写的规则给自己打分。
 - 管理员：`wrangler.toml` 的 `ADMIN_LOGINS`（逗号分隔的 GitHub 登录名）
   可管理任意包。
 - 相同版本再次提交 → 前端与服务端都会提示"版本已存在，请提升版本号"。
+- 只差 `~` / `.` / `:` 的两个版本（如 `1.0~rc1` 与 `1.0.rc1`）在 Release 里是
+  同一个文件名，后一个会被拒绝；已发布的发布清单（`*.deb.release.json`）不可修改。
+
+## 只更新商店信息
+
+已发布的包想改名称、介绍、分类、截图或图标，不必发新版本：
+
+- 网页：「我的软件包」里点「编辑商店信息」，表单带入线上内容，改完提交
+  （`POST /api/listing` → `repository_dispatch: web-listing-update`）。
+- 命令行：`czdev publish --meta-only`，读取 `app-builder.json` 的 `store` 段。
+
+两条通道都只改 `pool/main/<包名>/` 下的 `meta.json`、截图和图标，不动发布清单；
+归属与元数据规则照常检查，通过后和版本更新一样自动合并。
+
+## staging Release 清理
+
+`staging` 是缓冲区：网页上传的 `.deb` 与商店图片、`czdev` PR 镜像的 `.deb`
+都先放在这里。`prune-staging.yml` 每天（以及每次索引构建之后）清理：
+已提升进 `apt-pool` 的 `.deb`、超过 14 天且没有任何 open PR 引用的 `.deb`、
+超过 2 天的商店图片。open PR 还在用的 `.deb` 一律保留。可手动运行并勾选
+`dry_run` 先看会删什么。
+
+## 违规下架（管理员）
+
+开发者自己的「下架」只移除某一个版本的清单。因违规需要整体下架时，由
+admin/maintain 权限的维护者在 Actions 里运行 **Take Down Package**
+（`takedown.yml`），填写包名与原因：
+
+1. 删除 `pool/main/<包名>/` 整个目录（所有版本、商店信息、截图），自动合并并
+   重建索引，APT 与商店同时下线；
+2. 合并后删除 `apt-pool` 与 `staging` 里该包的二进制，旧下载链接一并失效；
+3. 默认把包名记入 `policy/takedowns.json`（原因、时间、执行人、原归属者），
+   两条提交通道都会拒绝这个包名，同一应用不能换个上传再回来；**不封禁账号**，
+   该开发者的其他应用照常；
+4. 开 issue @原归属者说明原因；申诉在该 issue 里处理，解除保留就是删掉
+   `takedowns.json` 里对应的条目。
+
+已经装到设备上的应用不受影响（设备端没有远程停用机制）。
 
 ## 初步安全报告（浏览器 + CI 双层）
 
 - setuid/setgid、全局可写、设备文件、路径穿越
 - 安装路径策略：对齐 Debian 的标准位置（`usr/bin/`、`usr/share/`、`usr/lib/`、
   `opt/`、`etc/`、`var/lib/`、`usr/share/APPLaunch/`、`usr/share/doc/`、
-  `(usr/)lib/systemd/system/`），但共享目录里的文件名/目录名必须与包名相关
+  `(usr/)lib/systemd/system/`），但共享目录里的文件名/目录名必须以包名开头
   （比对时忽略 `-` `_` `.` 的差异），因此装不进 `usr/bin/ls` 或 `sshd.service`；
+  `etc/default/`、`etc/logrotate.d/`、`usr/share/man/`、`usr/share/lintian/overrides/`、
+  `usr/share/bash-completion/completions/`、`usr/lib/tmpfiles.d/`、`usr/lib/udev/rules.d/`
+  这些 Debian 共享目录改为比对文件名（如 `70-<包名>.rules`、`<包名>.1.gz`），
+  udev 规则另外不得含 `RUN`、`PROGRAM`、`IMPORT{program}`；
   `usr/local/` 与 `/bin` `/sbin` `/lib` 等 usr-merge 别名路径按 Debian Policy
   9.1.2 / 10.1 一律拒绝。被拒时网页与失败 issue 都会给出规则说明和一段可直接
   交给 AI 的提示词（前端 `site/debparse.js` 与 CI 的实现由测试保证逐字一致）。
@@ -99,8 +141,8 @@ Cloudflare Workers（不使用 Cloudflare 的 git 集成 / 自动拉取部署）
      也可以本地 `wrangler secret put` 一次性设置）
 3. push `main`（或手动 workflow_dispatch）→ 自动部署。
 4. `packages-workflows/` 下的文件复制到 `CardputerZero/packages`：`*.yml`
-   进 `.github/workflows/`，`install_path_policy.py` 进 `.github/scripts/`
-   （一次性）。想恢复人工审核，网页通道把 `AUTO_MERGE` 改为 `"false"`，
+   进 `.github/workflows/`，`*.py` 与 `*.sh` 进 `.github/scripts/`
+   （每个文件第一行注明了目标路径）。想恢复人工审核，网页通道把 `AUTO_MERGE` 改为 `"false"`，
    命令行通道删掉 `validate-pr-comment.yml` 里的 Merge 步骤；PR 仍会自动
    创建，由管理员合并。
 5. 仓库 Settings → Actions 的 fork PR 审批策略需放宽到

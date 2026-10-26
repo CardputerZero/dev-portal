@@ -59,7 +59,7 @@
   },
   "pathHelp": {
     "title": "Install paths rejected — how to fix them",
-    "rule": "Debian's standard locations are all allowed; the one requirement is that whatever lands in a shared directory carries your package's name, so an app cannot quietly take over a system command or another package's files. Separators are ignored when matching, so package fontpreview may use a font_preview directory.",
+    "rule": "Debian's standard locations are all allowed; the one requirement is that whatever lands in a shared directory starts with your package's name, so an app cannot quietly take over a system command or another package's files. Separators are ignored when matching, so package fontpreview may use a font_preview directory.",
     "hint": "Paste the whole block below into an assistant (Cursor / Claude / ChatGPT). It carries the full policy plus the paths that were rejected, so it can fix your packaging scripts directly:",
     "copy": "Copy prompt",
     "show": "Show the full prompt",
@@ -122,9 +122,17 @@
     "unpublishFailed": "Unpublish failed: {msg}",
     "statusReview": "Under review",
     "statusPublishing": "Merged, index rebuilding…",
-    "viewPr": "View PR"
+    "viewPr": "View PR",
+    "editListing": "Edit store listing"
   },
   "decompress": {
     "loadFailed": "Could not load the {what} decompression module (used only for local preview). Please refresh and retry; you can still submit — the server completes validation."
+  },
+  "listing": {
+    "title": "Edit the store listing of {pkg}",
+    "note": "Updates only the name, description, categories, screenshots and icon shown in the store. No .deb is needed and the published version stays as it is. Merged automatically once the checks pass.",
+    "cancel": "Cancel",
+    "submit": "Submit listing update",
+    "submitting": "Submitting the listing update…"
   }
 }

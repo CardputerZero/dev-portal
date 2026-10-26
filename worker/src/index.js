@@ -13,6 +13,8 @@
  *   PUT  /api/submit/deb       raw octet-stream: the .deb bytes
  *   POST /api/submit/finalize  multipart: store metadata + PNGs → dispatch
  *   POST /api/unpublish   json: {package, version}
+ *   POST /api/listing     multipart: package + store metadata + PNGs → dispatch
+ *                         (store listing only; no .deb, the version stays)
  *
  * Submitting is three requests so the .deb never has to be materialized in
  * memory: `prepare` validates everything cheap (ownership, version bump, size)
@@ -66,6 +68,7 @@ export default {
         case "PUT /api/submit/deb": return await apiSubmitDeb(request, env);
         case "POST /api/submit/finalize": return await apiSubmitFinalize(request, env);
         case "POST /api/unpublish": return await apiUnpublish(request, env);
+        case "POST /api/listing": return await apiListing(request, env);
       }
       // Everything else falls through to the static assets.
       return await env.ASSETS.fetch(request);
@@ -386,9 +389,9 @@ function maxUploadBytes(env) {
   return Number(maxSizeMb(env)) * 1024 * 1024;
 }
 
-/** The published filename; `~` is not allowed in a GitHub release asset name. */
+/** The published filename; `~` and `:` are not allowed in a GitHub release asset name. */
 function canonicalName(ticket) {
-  return `${ticket.p}_${ticket.v}_${ticket.a}.deb`.replace(/~/g, ".");
+  return `${ticket.p}_${ticket.v}_${ticket.a}.deb`.replace(/[~:]/g, ".");
 }
 
 /** Returns a Response describing the first invalid field, or null when clean. */
@@ -472,6 +475,62 @@ export async function peekBytes(stream, n) {
       },
     }),
   };
+}
+
+/* ------------------------------ store listing ---------------------------- */
+
+/**
+ * Update a published package's store listing (meta.json, screenshots, icon)
+ * without a new .deb. Ownership is pre-checked here like an update; the
+ * packages-repo Action re-checks it against the recorded `uploaded_by`, runs
+ * the metadata policy and merges the listing PR.
+ */
+async function apiListing(request, env) {
+  const s = await openSession(request, env);
+  if (!s) return json(401, { error: "not_logged_in" });
+
+  const form = await request.formData();
+  const pkg = String(form.get("package") || "");
+  if (!/^[a-z0-9][a-z0-9.+-]+$/.test(pkg)) return json(400, { error: "bad_package_name" });
+
+  const [index, owners] = await Promise.all([fetchIndex(env), fetchOwners(env)]);
+  const entries = index.get(pkg) || [];
+  if (!entries.length) return json(404, { error: "not_published", detail: `${pkg} 还没有已发布的版本，请先上传 .deb` });
+  const ownerLogin = packageOwner(owners, pkg) || loginFromNoreply(entries[0].maintainer);
+  if (!s.a && ownerLogin !== s.l.toLowerCase()) {
+    return json(403, {
+      error: "not_owner",
+      detail: ownerLogin
+        ? `包 "${pkg}" 由 @${ownerLogin} 上传，只有其本人或管理员可以修改商店信息`
+        : `无法确认 "${pkg}" 的归属，请联系管理员`,
+    });
+  }
+
+  const release = await ensureBufferRelease(env);
+  let store;
+  try {
+    store = await collectStoreAssets(form, env, release, s.l, pkg);
+  } catch (e) {
+    return json(502, { error: "image_upload_failed", detail: String(e && e.message || e) });
+  }
+  if (store && store.error) return json(store.status || 400, { error: store.error, detail: store.detail });
+  if (!store || !store.payload) return json(400, { error: "nothing_to_update", detail: "没有填写任何商店信息" });
+
+  const dispatch = await gh(env, `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/dispatches`, {
+    method: "POST",
+    body: JSON.stringify({
+      event_type: "web-listing-update",
+      client_payload: { login: s.l, is_admin: s.a, package: pkg, store: store.payload },
+    }),
+  });
+  if (dispatch.status !== 204) return json(502, { error: "dispatch_failed", detail: await safeText(dispatch) });
+
+  return json(200, {
+    ok: true,
+    message: "商店信息已提交，服务器正在校验；通过后会自动生成并合并更新 PR。",
+    track_url: `https://github.com/${env.TARGET_OWNER}/${env.TARGET_REPO}/pulls?q=${encodeURIComponent(`is:pr in:title metadata: ${pkg}`)}`,
+    actions_url: `https://github.com/${env.TARGET_OWNER}/${env.TARGET_REPO}/actions/workflows/process-web-submission.yml`,
+  });
 }
 
 /* -------------------------------- unpublish ------------------------------ */

@@ -207,23 +207,53 @@ const PKG_DIR_ROOTS = ["usr/share/", "usr/lib/", "opt/", "var/lib/"];
 const ALIASED_ROOTS = ["bin/", "sbin/", "lib/", "lib32/", "lib64/", "libx32/"];
 const SYSTEMD_DIRS = ["lib/systemd/system/", "usr/lib/systemd/system/"];
 const UNIT_SUFFIX = /\.(service|socket|timer|target|path|mount)$/;
+// Shared Debian directories whose *files* carry the package name, rather than
+// a subdirectory: /etc/default/<pkg>, NN-<pkg>.rules, <pkg>.1.gz and so on.
+// Each entry is [directory pattern, what to strip from the file name].
+const FILE_NAMED_DIRS = [
+  [/^etc\/default\//, null],
+  [/^etc\/logrotate\.d\//, null],
+  [/^usr\/share\/lintian\/overrides\//, null],
+  [/^usr\/share\/bash-completion\/completions\//, null],
+  [/^usr\/lib\/tmpfiles\.d\//, /\.conf$/],
+  [/^usr\/lib\/udev\/rules\.d\//, /^\d+-|\.rules$/g],
+  [/^usr\/share\/man\/(?:[^/]+\/)?man[1-9][^/]*\//, /\.[1-9][^.]*(?:\.gz)?$/],
+];
+const UDEV_RULES_DIR = "usr/lib/udev/rules.d/";
+// udev runs these keys' commands as root, which apps must not do.
+const UDEV_EXEC_KEY = /(?:^|[\s,])(?:RUN|PROGRAM|IMPORT\{program\})(?!\w)/;
+const UDEV_EXEC_REASON = "udev rules must not use RUN, PROGRAM or IMPORT{program} (they run commands as root) / "
+  + "udev 规则不能使用 RUN、PROGRAM、IMPORT{program}（这些会以 root 执行命令）";
 
 const ALLOWED_SUMMARY = "允许 usr/bin/<与包名相关的可执行文件>、" +
   "usr/share|usr/lib|opt|var/lib 下与包名相关的子目录、etc/ 下与包名相关的配置、" +
+  "etc/default、man、lintian、bash-completion、tmpfiles.d、udev、logrotate.d 下以包名命名的文件、" +
   "usr/share/APPLaunch/、usr/share/doc/、systemd 服务目录";
 
 const normalizeName = (s) => s.toLowerCase().replace(/[-_.]/g, "");
 
 /**
- * Is `name` recognizably the package's own? Compared with separators ignored
- * and in both directions, so package `fontpreview` accepts a `font_preview`
- * directory and package `myapp` accepts a `myapp-cli` binary, while neither
- * accepts `ls`.
+ * Is `name` recognizably the package's own? Compared with separators ignored,
+ * and the name must start with the package name, so package `fontpreview`
+ * accepts a `font_preview` directory and a `fontpreview-cli` binary but not
+ * `ls`. Only this direction counts: package `sudoers-tool` must not claim
+ * `sudoers.d`.
  */
 function namedAfterPackage(name, pkgName) {
   const a = normalizeName(name.replace(UNIT_SUFFIX, ""));
   const b = normalizeName(pkgName || "");
-  return Boolean(a && b) && (a.startsWith(b) || b.startsWith(a));
+  return Boolean(a && b) && a.startsWith(b);
+}
+
+/**
+ * Does this udev rule make udev execute something? RUN, PROGRAM and
+ * IMPORT{program} all run as root, outside any service's User=.
+ */
+export function udevRuleRunsPrograms(text) {
+  return text.split("\n").some((raw) => {
+    const line = raw.trim();
+    return line !== "" && !line.startsWith("#") && UDEV_EXEC_KEY.test(line);
+  });
 }
 
 /**
@@ -256,6 +286,15 @@ export function installPathIssue(path, pkgName) {
     return "Debian Policy 10.1 forbids /bin /sbin /lib etc. (usr-merge alias paths); use the /usr equivalent / Debian Policy 10.1 禁止软件包写入 /bin /sbin /lib 等 usr-merge 别名路径，请改用 /usr 下的对应位置";
   }
   if (path.startsWith("usr/share/APPLaunch/") || path.startsWith("usr/share/doc/")) return null;
+  for (const [pattern, strip] of FILE_NAMED_DIRS) {
+    const m = path.match(pattern);
+    if (!m) continue;
+    const dir = m[0], name = path.slice(dir.length);
+    if (name.includes("/")) return `no subdirectories under ${dir} / ${dir} 下不应再有子目录`;
+    return namedAfterPackage(strip ? name.replace(strip, "") : name, pkgName)
+      ? null
+      : `the file name under ${dir} must relate to the package name ${pkgName} / ${dir} 下的文件名必须与包名 ${pkgName} 相关`;
+  }
   // /etc/<pkg>.conf is as much a Debian convention as /etc/<pkg>/ (compare
   // rsyslog.conf, logrotate.conf), so a lone conffile is fine here.
   if (path.startsWith("etc/")) {
@@ -297,7 +336,7 @@ const INSTALL_PATH_PROMPT = `我在给 CardputerZero AppStore 打一个 Debian �
 请帮我修改打包脚本（CMakeLists.txt / debian/rules / install 脚本 / Makefile，看项目里用的是哪种），
 把文件装到合规位置，并同步更新 .desktop 里的 Exec 和 Icon、以及代码里读取资源文件的路径。
 
-商店的规则（包名记作 PKG，比对时忽略 - _ . 的差异，所以 PKG 是 fontpreview 时目录叫 font_preview 也算合规）：
+商店的规则（包名记作 PKG。“与包名相关”指名字以 PKG 开头，比对时忽略 - _ . 的差异，所以 PKG 是 fontpreview 时目录叫 font_preview、fontpreview-data 都算合规，叫 preview 不算）：
 
 允许安装到：
 - usr/bin/<名字>：可执行文件，名字必须与包名相关（这是 Debian Policy 10.1 的标准位置）
@@ -306,6 +345,9 @@ const INSTALL_PATH_PROMPT = `我在给 CardputerZero AppStore 打一个 Debian �
 - opt/<与包名相关的目录>/**：整体打包自带的目录
 - etc/<与包名相关的目录>/** 或 etc/<与包名相关>.conf：配置文件（Debian conffile 惯例）
 - var/lib/<与包名相关的目录>/**：运行时数据
+- etc/default/<PKG>、etc/logrotate.d/<PKG>、usr/share/lintian/overrides/<PKG>、usr/share/bash-completion/completions/<PKG>、
+  usr/lib/tmpfiles.d/<PKG>.conf、usr/share/man/manN/<PKG>.N.gz：Debian 标准的共享目录，目录名照旧，文件名以包名开头
+- usr/lib/udev/rules.d/NN-<PKG>.rules：udev 规则，不能使用 RUN、PROGRAM 和 program 类型的 IMPORT（这些会以 root 执行命令）
 - usr/share/APPLaunch/**：CardputerZero 启动器资源，且必须有 usr/share/APPLaunch/applications/<名字>.desktop
 - usr/share/doc/**：文档
 - lib/systemd/system/<与包名相关>.service 或 usr/lib/systemd/system/<同样>：服务名必须与包名相关，
@@ -413,7 +455,11 @@ function analyzeFiles(dataFiles, report, pkgName) {
     // is already doomed. Skipped without a package name, since nothing can then
     // be judged as the package's own and the missing field is reported already.
     if (f.type !== "dir" && pkgName) {
-      const issue = installPathIssue(f.path, pkgName);
+      let issue = installPathIssue(f.path, pkgName);
+      if (!issue && f.type === "file" && f.path.startsWith(UDEV_RULES_DIR)
+          && udevRuleRunsPrograms(new TextDecoder().decode(f.data))) {
+        issue = UDEV_EXEC_REASON;
+      }
       if (issue) {
         report.push(["danger", `安装路径不合规: ${f.path} —— ${issue}`]);
         badPaths.push(f.path);

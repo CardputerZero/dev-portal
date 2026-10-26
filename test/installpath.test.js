@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { installPathIssue, installPathPrompt, unitRunsAsRoot } from "../site/debparse.js";
+import { installPathIssue, installPathPrompt, udevRuleRunsPrograms, unitRunsAsRoot } from "../site/debparse.js";
 
 const PKG = "fontpreview";
 
@@ -40,6 +40,16 @@ const ALLOWED = [
   // Units, under either the legacy or the merged-usr location.
   "lib/systemd/system/fontpreview.service",
   "usr/lib/systemd/system/font_preview.timer",
+  // Shared Debian directories where the file, not a subdirectory, is named
+  // after the package.
+  "etc/default/fontpreview",
+  "etc/logrotate.d/font-preview",
+  "usr/share/lintian/overrides/fontpreview",
+  "usr/share/bash-completion/completions/fontpreview",
+  "usr/lib/tmpfiles.d/fontpreview.conf",
+  "usr/lib/udev/rules.d/70-fontpreview.rules",
+  "usr/share/man/man1/fontpreview.1.gz",
+  "usr/share/man/zh_CN/man5/fontpreview.conf.5.gz",
 ];
 
 const BLOCKED = [
@@ -52,6 +62,10 @@ const BLOCKED = [
   ["usr/lib/aarch64-linux-gnu/libfoo.so", /目录名必须与包名/],
   ["etc/sudoers.d/fontpreview", /etc\/ 下只能放/],
   ["etc/passwd", /etc\/ 下只能放/],
+  ["etc/default/keyboard", /etc\/default\/ 下的文件名必须与包名/],
+  ["usr/lib/udev/rules.d/99-com.rules", /udev\/rules\.d\/ 下的文件名必须与包名/],
+  ["usr/share/man/man1/ls.1.gz", /man1\/ 下的文件名必须与包名/],
+  ["usr/share/lintian/overrides/fontpreview/x", /下不应再有子目录/],
   // Debian hard prohibitions.
   ["usr/local/bin/fontpreview", /9\.1\.2/],
   ["bin/fontpreview", /10\.1/],
@@ -80,12 +94,25 @@ test("blocks hijacking, Debian-prohibited roots and structural mistakes", () => 
   }
 });
 
-test("a package whose name prefixes the file name is still its own", () => {
-  // Either direction counts: package font-preview-app shipping font_preview,
-  // and package fp shipping fp-helper, are both the package's own files.
-  assert.equal(installPathIssue("usr/bin/font_preview", "font-preview-app"), null);
-  assert.equal(installPathIssue("usr/share/fp/x", "fp-helper"), null);
+test("a name must start with the package name, never the other way round", () => {
+  assert.equal(installPathIssue("usr/bin/fp-helper", "fp"), null);
+  // A package must not claim a shorter shared name that its own name starts
+  // with: sudoers.d and cron.d run as root, sudo shadows a system command.
+  assert.ok(installPathIssue("etc/sudoers.d/x", "sudoers-d-tool"));
+  assert.ok(installPathIssue("etc/cron.d/x", "crond-x"));
+  assert.ok(installPathIssue("usr/bin/sudo", "sudo-gui"));
+  assert.ok(installPathIssue("lib/systemd/system/ssh.service", "ssh-tool"));
+  assert.ok(installPathIssue("usr/share/fp/x", "fp-helper"));
   assert.ok(installPathIssue("usr/bin/preview", "fontpreview"));
+});
+
+test("udev rules may match devices but not run anything", () => {
+  assert.equal(udevRuleRunsPrograms('SUBSYSTEM=="hidraw", ATTRS{idVendor}=="303a", MODE="0660", GROUP="plugdev"\n'), false);
+  assert.equal(udevRuleRunsPrograms('# RUN+="/bin/true"\nSUBSYSTEM=="usb", TAG+="uaccess"\n'), false);
+  assert.equal(udevRuleRunsPrograms('SUBSYSTEM=="usb", RUN+="/usr/bin/fontpreview"\n'), true);
+  assert.equal(udevRuleRunsPrograms('KERNEL=="sd*", PROGRAM="/bin/sh -c id", NAME="%c"\n'), true);
+  assert.equal(udevRuleRunsPrograms('ACTION=="add", IMPORT{program}="/x"\n'), true);
+  assert.equal(udevRuleRunsPrograms('ACTION=="add",RUN{builtin}+="kmod load x"\n'), true);
 });
 
 test("a unit is root unless it says otherwise", () => {
@@ -138,8 +165,9 @@ test("the Actions' Python copy of the policy agrees, verbatim", (t) => {
   const cases = [
     ...ALLOWED.map((p) => [PKG, p]),
     ...BLOCKED.map(([p]) => [PKG, p]),
-    ["font-preview-app", "usr/bin/font_preview"],
+    ["fp", "usr/bin/fp-helper"],
     ["fp-helper", "usr/share/fp/x"],
+    ["sudoers-d-tool", "etc/sudoers.d/x"],
     ["fontpreview", "usr/bin/preview"],
   ];
   const { verdicts, prompt } = runActionPolicy(cases);

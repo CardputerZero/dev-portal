@@ -345,6 +345,7 @@ $("file").addEventListener("change", (e) => pick(e.target.files[0]));
 async function pick(f) {
   if (!f) return;
   if (!f.name.endsWith(".deb")) return say("err", t("upload.pickDeb"));
+  leaveListing();
   if (maxSizeMb && f.size > maxSizeMb * 1048576) {
     return say("err", t("upload.tooLarge", { size: (f.size / 1048576).toFixed(1), max: maxSizeMb }));
   }
@@ -768,6 +769,7 @@ function missingStoreFields() {
 }
 
 $("submit-btn").addEventListener("click", async () => {
+  if (listingPkg) return submitListing();
   if (!file || !parsed) return;
 
   const missing = missingStoreFields();
@@ -802,16 +804,7 @@ $("submit-btn").addEventListener("click", async () => {
     // Privacy: when checked (default) the Worker records a noreply address;
     // when unchecked it publishes the developer's verified GitHub email.
     body.append("hide_email", $("hide-email").checked ? "true" : "false");
-    body.append("title", $("s-title").value.trim());
-    body.append("summary", $("s-summary").value.trim());
-    body.append("description", $("s-desc").value.trim());
-    body.append("categories", selectedCategories().join(","));
-    body.append("display_name", $("s-author").value.trim());
-    body.append("license", $("s-license").value.trim());
-    body.append("share_code", $("s-code").value.trim().toUpperCase());
-    body.append("permissions", JSON.stringify(selectedPermissions()));
-    if (storeIcon) body.append("icon", storeIcon, "icon.png");
-    storeShots.forEach((sh, i) => body.append("screenshots", sh.blob, `shot${i}.png`));
+    appendStoreFields(body);
 
     const r = await fetch("/api/submit/finalize", {
       method: "POST",
@@ -834,6 +827,87 @@ $("submit-btn").addEventListener("click", async () => {
     $("submit-btn").disabled = false;
   }
 });
+
+/** The store form's fields and images, as both submit paths send them. */
+function appendStoreFields(body) {
+  body.append("title", $("s-title").value.trim());
+  body.append("summary", $("s-summary").value.trim());
+  body.append("description", $("s-desc").value.trim());
+  body.append("categories", selectedCategories().join(","));
+  body.append("display_name", $("s-author").value.trim());
+  body.append("license", $("s-license").value.trim());
+  body.append("share_code", $("s-code").value.trim().toUpperCase());
+  body.append("permissions", JSON.stringify(selectedPermissions()));
+  if (storeIcon) body.append("icon", storeIcon, "icon.png");
+  storeShots.forEach((sh, i) => body.append("screenshots", sh.blob, `shot${i}.png`));
+}
+
+/* --------------------------- store listing only -------------------------- */
+
+// Set while the form edits a published package's listing without a .deb.
+let listingPkg = null;
+
+/**
+ * Open the store form for a published package with nothing to upload: the
+ * developer only wants to change its name, description, screenshots or icon,
+ * and the version and binary stay as published.
+ */
+async function editListing(pkg) {
+  file = null;
+  parsed = null;
+  listingPkg = pkg;
+  resetStoreForm();
+  say("", "");
+  $("drop-text").innerHTML = t("upload.dropHtml");
+  $("deb-only").classList.add("hidden");
+  $("hide-email-row").classList.add("hidden");
+  $("listing-title").textContent = t("listing.title", { pkg });
+  $("listing-banner").classList.remove("hidden");
+  $("submit-btn").disabled = false;
+  $("submit-btn").textContent = t("listing.submit");
+  $("preview-box").classList.remove("hidden");
+  switchTab("upload");
+  await prefillStore(pkg).catch(() => { /* registry unreachable: start blank */ });
+}
+
+/** Back to the ordinary .deb upload form. */
+function leaveListing() {
+  if (!listingPkg) return;
+  listingPkg = null;
+  $("deb-only").classList.remove("hidden");
+  $("hide-email-row").classList.remove("hidden");
+  $("listing-banner").classList.add("hidden");
+  $("preview-box").classList.add("hidden");
+  $("submit-btn").textContent = t("preview.submit");
+  resetStoreForm();
+}
+
+$("listing-cancel").addEventListener("click", () => { leaveListing(); say("", ""); });
+
+async function submitListing() {
+  const missing = missingStoreFields();
+  if (missing.length) {
+    return say("err", t("form.missingRequired", { fields: missing.join("、") }));
+  }
+  $("submit-btn").disabled = true;
+  try {
+    say("", t("listing.submitting"));
+    const body = new FormData();
+    body.append("package", listingPkg);
+    appendStoreFields(body);
+    const r = await fetch("/api/listing", { method: "POST", body });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+    say("ok", t("upload.submitOk", {
+      message: data.message,
+      actions: data.actions_url,
+      track: data.track_url,
+    }));
+  } catch (err) {
+    say("err", t("upload.submitFailed", { msg: err.message }));
+    $("submit-btn").disabled = false;
+  }
+}
 
 async function postJson(path, obj) {
   const r = await fetch(path, {
@@ -931,7 +1005,9 @@ async function renderMine() {
     actions.appendChild(a);
     rows.appendChild(tr);
   }
-  for (const p of mine.sort((a, b) => a.name.localeCompare(b.name) || compareDebVersions(a.Version, b.Version))) {
+  mine.sort((a, b) => a.name.localeCompare(b.name) || compareDebVersions(a.Version, b.Version));
+  mine.forEach((p, i) => { p.latest = i === mine.length - 1 || mine[i + 1].name !== p.name; });
+  for (const p of mine) {
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${p.name}</td><td>${p.Version}</td><td>${p.owner ? "@" + p.owner : p.email}</td><td class="row-actions"></td>`;
     const actions = tr.lastElementChild;
@@ -946,6 +1022,13 @@ async function renderMine() {
       a.download = `${p.name}_${p.Version}_${p.Architecture || "arm64"}.deb`;
       a.title = `${p.name} ${p.Version}（${p.Size ? (p.Size / 1048576).toFixed(1) + " MB" : t("mine.sizeUnknown")}）`;
       actions.appendChild(a);
+    }
+    // The listing belongs to the package, not a version: offer it once.
+    if (p.latest) {
+      const edit = document.createElement("button");
+      edit.textContent = t("mine.editListing");
+      edit.addEventListener("click", () => editListing(p.name));
+      actions.appendChild(edit);
     }
     const btn = document.createElement("button");
     btn.textContent = t("mine.unpublish");

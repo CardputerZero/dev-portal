@@ -1,6 +1,7 @@
 /* CardputerZero developer portal front-end. Same-origin API (see worker/). */
 
 import { parseDeb, compareDebVersions, extractEmail, loginFromNoreply, installPathPrompt } from "/debparse.js";
+import { pendingSubmissions } from "/submissions.js";
 
 // All decompression libraries are vendored at /vendor/ and served same-origin,
 // so there is zero runtime dependency on a third-party CDN (availability,
@@ -977,10 +978,7 @@ async function renderMine() {
 
   // Submissions not yet in the published index: open PR = under review;
   // merged PR = published but the index/CDN is still rebuilding (~minutes).
-  const pending = submissions.filter((sub) => {
-    if (sub.state !== "open" && sub.state !== "merged") return false;
-    return !(idx.get(sub.package) || []).some((e) => e.Version === sub.version);
-  });
+  const pending = pendingSubmissions(submissions, idx);
 
   if (!mine.length && !pending.length) {
     rows.innerHTML = `<tr><td colspan="4" class="muted">${t("mine.empty")}</td></tr>`;

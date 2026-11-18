@@ -85,13 +85,21 @@ GitHub → Settings → Developer settings → OAuth Apps → New OAuth App：
 
 ## 六、packages 仓库侧（一次性）
 
-把 `packages-workflows/` 下的两个 workflow 复制到
-`CardputerZero/packages` 的 `.github/workflows/`：
+把 `packages-workflows/` 下的 workflow 复制到
+`CardputerZero/packages` 的 `.github/workflows/`，Python / shell 文件复制到
+`.github/scripts/`。其中版本替换需要同步以下文件：
 
 - `process-web-submission.yml` — 接收网页提交，dpkg-deb 权威校验，
   通过后自动开发布 PR（`AUTO_MERGE: "true"` 时自动合并；改为
   `"false"` 则保留人工审核）；失败开 issue @提交者。
 - `process-web-unpublish.yml` — 接收下架请求，生成移除 PR。
+- `update-index.yml` — 两条发布路径共用的部署、最新版本选择和旧版本清理。
+- `catalog_cleanup.py` — 旧清单替换、历史清理计划、双 registry 校验和
+  发布后清理；部署工作流与网页发布工作流都依赖它。
+
+先更新 packages，再部署门户界面。发布新版会自动替换同应用旧版本，按
+Debian 版本规则排序；仅修改商店资料不会发起版本删除。旧 Release 安装包
+在新版完成分发且国内外 registry 校验成功后清理。失败后重跑部署即可。
 
 并在 `packages` 仓库建 `web-submission-failed` label（失败反馈 issue 用）。
 

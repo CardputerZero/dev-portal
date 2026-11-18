@@ -1,0 +1,337 @@
+# Copy to CardputerZero/packages: .github/workflows/update-index.yml
+name: Deploy APT Repository to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pool/**'
+      - 'oss/**'
+      - '.github/scripts/catalog_cleanup.py'
+      - '.github/scripts/download.py'
+      - '.github/workflows/update-index.yml'
+
+  workflow_dispatch:
+    inputs:
+      sync_oss:
+        description: 'Also sync the generated APT repository to Aliyun OSS'
+        required: false
+        type: boolean
+        default: false
+      oss_prefix:
+        description: 'OSS object prefix for manual sync runs'
+        required: false
+        default: 'packages'
+
+permissions:
+  contents: write      # promote .deb assets into the apt-pool release
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  # Never interrupt a withdrawal between catalog publication and asset cleanup.
+  cancel-in-progress: false
+
+env:
+  # Long-lived "pool" release that stores every .deb as an asset.
+  # .deb files are NOT kept in git; they live here and are distributed via the
+  # Releases CDN (unlimited bandwidth). Each package directory in git carries a
+  # <pkg>_<ver>_<arch>.deb.release.json manifest describing where the binary
+  # was first uploaded (a contributor fork release) so CI can promote it here.
+  POOL_TAG: apt-pool
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.snapshot.outputs.sha }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Record current catalog and approved withdrawals
+        id: snapshot
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          python3 .github/scripts/catalog_cleanup.py plan > /tmp/withdrawals.json
+          # Old clients and concurrently merged PRs can leave multiple versions.
+          # Deploy only the highest Debian version, regardless of upload path.
+          python3 .github/scripts/catalog_cleanup.py stage-superseded /tmp/withdrawals.json
+          echo "withdrawals=$(python3 -c 'import json; print(str(bool(json.load(open("/tmp/withdrawals.json"))["withdrawn"])).lower())')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: withdrawal-plan
+          path: /tmp/withdrawals.json
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev rsync jq
+
+      - name: Promote pending .deb manifests into the apt-pool release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Existing assets in the pool release (by name).
+          gh release view "$POOL_TAG" --json assets --jq '.assets[].name' 2>/dev/null | sort > /tmp/pool-assets.txt || : > /tmp/pool-assets.txt
+
+          # Each manifest declares the canonical filename + source URL + sha256.
+          shopt -s nullglob globstar
+          for manifest in pool/main/**/*.deb.release.json; do
+            name=$(jq -r '.filename' "$manifest")
+            url=$(jq -r '.url' "$manifest")
+            want_sha=$(jq -r '.sha256' "$manifest")
+            if [ -z "$name" ] || [ "$name" = "null" ]; then
+              echo "::error::manifest $manifest missing .filename"; exit 1
+            fi
+            if grep -qxF "$name" /tmp/pool-assets.txt; then
+              echo "already in pool: $name"
+              continue
+            fi
+            # The release asset name is the uploaded file's basename, so the temp
+            # file MUST be named exactly $name (a "promote-$name" temp path would
+            # upload the asset as "promote-<name>", which the Collect step below
+            # then fails to find).
+            mkdir -p /tmp/promote
+            tmp="/tmp/promote/$name"
+            # Prefer the org-controlled staging mirror (populated by
+            # capture-to-staging.yml when the publish PR was opened); fall back
+            # to the manifest url (e.g. a contributor fork) if staging misses
+            # or its content does not match the manifest sha256.
+            fetched=""
+            for src in "https://github.com/${GITHUB_REPOSITORY}/releases/download/staging/$name" "$url"; do
+              rm -f "$tmp"
+              echo "promoting $name from $src"
+              python3 .github/scripts/download.py "$src" "$tmp" || continue
+              got_sha=$(sha256sum "$tmp" | awk '{print $1}')
+              if [ -n "$want_sha" ] && [ "$want_sha" != "null" ] && [ "$got_sha" != "$want_sha" ]; then
+                echo "::warning::sha256 mismatch for $name from $src (want $want_sha got $got_sha)"; continue
+              fi
+              fetched=1; break
+            done
+            if [ -z "$fetched" ]; then
+              echo "::error::could not fetch $name with a matching sha256 from staging or $url"; exit 1
+            fi
+            gh release upload "$POOL_TAG" "$tmp" --clobber
+            rm -f "$tmp"
+          done
+
+      - name: Collect manifested .deb from the apt-pool release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Manifests in git are the source of truth for the catalog: only the
+          # .deb referenced by a manifest is indexed, so deleting a manifest
+          # (e.g. `czdev unpublish`) drops the package on the next build. The
+          # completion job then revokes the old release download links too.
+          mkdir -p release-debs
+          shopt -s nullglob globstar
+          count=0
+          for manifest in pool/main/**/*.deb.release.json; do
+            name=$(jq -r '.filename' "$manifest")
+            if ! gh release download "$POOL_TAG" -D release-debs --pattern "$name" --clobber; then
+              echo "::error::asset '$name' (from $manifest) not found in the $POOL_TAG release"; exit 1
+            fi
+            count=$((count+1))
+          done
+          echo "collected $count .deb from manifests"
+
+      - name: Build APT repository (Pages metadata only; .deb served from Releases)
+        run: |
+          set -euo pipefail
+          REL_BASE="${{ github.server_url }}/${{ github.repository }}/releases/download/${POOL_TAG}"
+          # Git does not preserve pool/ after the last app is removed.
+          mkdir -p pool/main public/dists/stable/main/binary-arm64
+
+          # Pages serves metadata + screenshots + meta.json, but NOT the .deb files.
+          rsync -a --exclude='*.deb' pool/ public/pool/
+          python3 .github/scripts/catalog_cleanup.py prune-tree public/pool/main
+
+          # Scan the .deb downloaded from the release; rewrite Filename to the
+          # release asset download URL (flat asset name == basename).
+          ( cd release-debs && dpkg-scanpackages --multiversion . /dev/null ) 2>/dev/null \
+            | awk -v base="$REL_BASE" '
+                /^Filename:/ { n = split($2, a, "/"); print "Filename: " base "/" a[n]; next }
+                { print }
+              ' > public/dists/stable/main/binary-arm64/Packages
+          gzip -k -f public/dists/stable/main/binary-arm64/Packages
+
+          cd public/dists/stable
+          printf '%s\n' \
+            "Origin: CardputerZero" \
+            "Label: CardputerZero AppStore" \
+            "Suite: stable" \
+            "Codename: stable" \
+            "Architectures: arm64" \
+            "Components: main" \
+            "Description: CardputerZero APT Repository" > Release
+          echo "MD5Sum:" >> Release
+          for f in main/binary-arm64/Packages main/binary-arm64/Packages.gz; do
+            size=$(wc -c < "$f" | tr -d ' ')
+            hash=$(md5sum "$f" | awk '{print $1}')
+            printf " %s %s %s\n" "$hash" "$size" "$f" >> Release
+          done
+          echo "SHA256:" >> Release
+          for f in main/binary-arm64/Packages main/binary-arm64/Packages.gz; do
+            size=$(wc -c < "$f" | tr -d ' ')
+            hash=$(sha256sum "$f" | awk '{print $1}')
+            printf " %s %s %s\n" "$hash" "$size" "$f" >> Release
+          done
+
+      - name: Generate owners.json (authoritative package ownership for the portal)
+        run: |
+          set -euo pipefail
+          # Aggregate `uploaded_by` from every release manifest into one small
+          # JSON so the developer portal can resolve "my packages" without
+          # guessing from the deb's Maintainer email (which is often a real,
+          # non-noreply address that carries no GitHub login).
+          # Shape: { "<package>": { "<version>": "<github login, lowercase>" } }
+          python3 - <<'PY'
+          import glob, json
+          owners = {}
+          for path in glob.glob("pool/main/**/*.deb.release.json", recursive=True):
+              try:
+                  m = json.load(open(path))
+              except Exception:
+                  continue
+              pkg = m.get("package")
+              ver = m.get("version")
+              by = (m.get("uploaded_by") or "").strip().lower()
+              if pkg and ver and by:
+                  owners.setdefault(pkg, {})[ver] = by
+          with open("public/owners.json", "w") as f:
+              json.dump(owners, f, indent=1, sort_keys=True)
+          print(f"owners.json: {sum(len(v) for v in owners.values())} versions "
+                f"across {len(owners)} packages")
+          PY
+
+      - name: Stage OSS tree (China mirror serves .deb locally with relative paths)
+        if: ${{ vars.PACKAGES_OSS_SYNC_ENABLED == 'true' || inputs.sync_oss == true || steps.snapshot.outputs.withdrawals == 'true' }}
+        run: |
+          set -euo pipefail
+          # OSS hosts the full repo: copy metadata, drop the .deb into pool/ by
+          # package name (filename is <package>_<version>_<arch>.deb), and
+          # regenerate Packages with RELATIVE Filename so apt/registry resolve
+          # the binaries from OSS itself.
+          rsync -a public/ oss-public/
+          # An empty catalog has no .deb files to copy.
+          shopt -s nullglob
+          for deb in release-debs/*.deb; do
+            base=$(basename "$deb")
+            pkg=${base%%_*}
+            mkdir -p "oss-public/pool/main/$pkg"
+            cp -f "$deb" "oss-public/pool/main/$pkg/$base"
+          done
+          ( cd oss-public && dpkg-scanpackages --multiversion pool/ /dev/null ) 2>/dev/null \
+            > oss-public/dists/stable/main/binary-arm64/Packages
+          gzip -k -f oss-public/dists/stable/main/binary-arm64/Packages
+
+          # Regenerate the OSS Release so its hashes match the relative-path
+          # Packages (the rsync'd copy still carried the Pages-build hashes,
+          # which apt rejects as a size/hash mismatch).
+          cd oss-public/dists/stable
+          printf '%s\n' \
+            "Origin: CardputerZero" \
+            "Label: CardputerZero AppStore" \
+            "Suite: stable" \
+            "Codename: stable" \
+            "Architectures: arm64" \
+            "Components: main" \
+            "Description: CardputerZero APT Repository" > Release
+          echo "MD5Sum:" >> Release
+          for f in main/binary-arm64/Packages main/binary-arm64/Packages.gz; do
+            size=$(wc -c < "$f" | tr -d ' ')
+            hash=$(md5sum "$f" | awk '{print $1}')
+            printf " %s %s %s\n" "$hash" "$size" "$f" >> Release
+          done
+          echo "SHA256:" >> Release
+          for f in main/binary-arm64/Packages main/binary-arm64/Packages.gz; do
+            size=$(wc -c < "$f" | tr -d ' ')
+            hash=$(sha256sum "$f" | awk '{print $1}')
+            printf " %s %s %s\n" "$hash" "$size" "$f" >> Release
+          done
+
+      - name: Setup ossutil
+        if: ${{ vars.PACKAGES_OSS_SYNC_ENABLED == 'true' || inputs.sync_oss == true || steps.snapshot.outputs.withdrawals == 'true' }}
+        uses: manyuanrong/setup-ossutil@v3.0
+        with:
+          endpoint: ${{ vars.PACKAGES_OSS_ENDPOINT || 'oss-cn-shenzhen.aliyuncs.com' }}
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+
+      - name: Sync APT repository to Aliyun OSS
+        if: ${{ vars.PACKAGES_OSS_SYNC_ENABLED == 'true' || inputs.sync_oss == true || steps.snapshot.outputs.withdrawals == 'true' }}
+        env:
+          OSS_SYNC_ENABLED: 'true'
+          OSS_PUBLIC_DIR: oss-public
+          OSS_ENDPOINT: ${{ vars.PACKAGES_OSS_ENDPOINT || 'oss-cn-shenzhen.aliyuncs.com' }}
+          OSS_BUCKET: ${{ vars.PACKAGES_OSS_BUCKET || 'cardputer-zero-repo' }}
+          OSS_PREFIX: ${{ inputs.oss_prefix || vars.PACKAGES_OSS_PREFIX || 'packages' }}
+          OSS_PUBLIC_BASE_URL: ${{ vars.PACKAGES_OSS_PUBLIC_BASE_URL }}
+        run: oss/sync-apt-repo.sh
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  notify-registry:
+    needs: build-and-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger registry update on cardputerzero.github.io
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DISPATCH_TOKEN }}
+          repository: CardputerZero/cardputerzero.github.io
+          event-type: packages-updated
+
+  complete-withdrawals:
+    needs: [build-and-deploy, notify-registry]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build-and-deploy.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: withdrawal-plan
+          path: /tmp
+
+      - name: Verify both published store registries
+        env:
+          OSS_BASE: ${{ vars.PACKAGES_OSS_PUBLIC_BASE_URL || 'https://cardputer-zero-repo.oss-cn-shenzhen.aliyuncs.com' }}
+          OSS_PREFIX: ${{ inputs.oss_prefix || vars.PACKAGES_OSS_PREFIX || 'packages' }}
+        run: |
+          python3 .github/scripts/catalog_cleanup.py verify-registries /tmp/withdrawals.json \
+            https://cardputerzero.github.io/generated/registry.json \
+            "${OSS_BASE%/}/${OSS_PREFIX#/}/cn/registry.json"
+
+      # Keep main unchanged if promotion, deployment or registry verification
+      # fails. A token-authenticated push does not recursively trigger this job.
+      - name: Retire superseded manifests on current main
+        run: python3 .github/scripts/catalog_cleanup.py retire-superseded /tmp/withdrawals.json
+
+      - name: Delete withdrawn binaries from all package releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/catalog_cleanup.py releases /tmp/withdrawals.json

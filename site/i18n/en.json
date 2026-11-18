@@ -53,7 +53,7 @@
     "newPkgAnon": "New package name — after your first submission it belongs to you",
     "ownedBy": "This package name is owned by @{login}; only they or an admin can update it",
     "versionTooLow": "Version {version} is not higher than the published {latest}; please bump the version",
-    "versionUpdate": "Published {latest} → this update is {version}",
+    "versionUpdate": "Published {latest} → this update is {version}. Older versions are removed automatically after the update is published.",
     "submit": "Submit to AppStore",
     "blocked": "Blocking issues found — cannot submit"
   },
@@ -117,7 +117,7 @@
     "unpublish": "Unpublish",
     "submitted": "Submitted",
     "sizeUnknown": "size unknown",
-    "note": "The list combines the live APT index with your recent publish PRs and only shows packages that belong to you. A fresh submission first appears as \"under review\"; after merge the index takes a few minutes to rebuild. You can download published .deb files directly; unpublishing opens a removal PR.",
+    "note": "Each app keeps its latest published version; older versions are removed automatically after an update. The list combines the live APT index with your recent publish PRs and only shows packages that belong to you. A fresh submission first appears as \"under review\"; after merge the index takes a few minutes to rebuild. You can download published .deb files directly; unpublishing opens a removal PR.",
     "confirmUnpublish": "Unpublish {name} {version}? This opens a removal PR.",
     "unpublishFailed": "Unpublish failed: {msg}",
     "statusReview": "Under review",

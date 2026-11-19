@@ -53,7 +53,7 @@
     "newPkgAnon": "新包名，首次提交后归属于你",
     "ownedBy": "包名已被 @{login} 占用，只有其本人或管理员可以更新",
     "versionTooLow": "版本 {version} 不高于线上已发布的 {latest}，请提升版本号",
-    "versionUpdate": "已发布 {latest} → 本次更新为 {version}",
+    "versionUpdate": "已发布 {latest} → 本次更新为 {version}。新版发布完成后会自动清理旧版本。",
     "submit": "提交到 AppStore",
     "blocked": "存在阻断性问题，无法提交"
   },
@@ -117,7 +117,7 @@
     "unpublish": "下架",
     "submitted": "已提交",
     "sizeUnknown": "大小未知",
-    "note": "列表来自线上 APT 索引与你最近的发布 PR，只显示归属于你的包。刚提交的包会先显示为「审核中」，合并后索引更新约需几分钟。可直接下载已发布的 .deb；下架会生成移除 PR。",
+    "note": "每个应用只保留最新发布版本，更新完成后自动清理旧版本，无需手动下架。列表来自线上 APT 索引与你最近的发布 PR，只显示归属于你的包。刚提交的包会先显示为「审核中」，合并后索引更新约需几分钟。可直接下载已发布的 .deb；下架会生成移除 PR。",
     "confirmUnpublish": "确认下架 {name} {version}？将生成移除 PR。",
     "unpublishFailed": "下架失败：{msg}",
     "statusReview": "审核中",

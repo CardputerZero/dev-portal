@@ -152,6 +152,27 @@ Cloudflare Workers（不使用 Cloudflare 的 git 集成 / 自动拉取部署）
 在 `worker/wrangler.toml` 的 `[vars] ADMIN_LOGINS` 里填管理员的 GitHub
 登录名（逗号分隔）。
 
+## 更新版本时自动清理旧版本
+
+应用更新会在发布 PR 中移除同一应用的旧版本清单，不再需要逐个手动下架。
+`arm64` 与 `all` 共用应用版本策略，按 Debian 版本顺序保留最高版本；同一
+最高版本可保留两个架构。仅修改商店资料时不删除版本清单。
+
+`packages-workflows/catalog_cleanup.py` 与 `update-index.yml` 模板也提供共享
+部署兜底，覆盖旧版 czdev、历史多版本和并发合并的提交。旧安装包的官方
+Release 下载链接会在新版部署完成、国内外 registry 均确认新版存在且旧版
+已移除后清理；OSS 随索引同步移除旧文件。部署失败可以重跑，不会因为打开
+PR 就撤销旧下载。开发者个人 fork 的 Release 不由商店删除。
+
+请先更新 `CardputerZero/packages` 的实际工作流和脚本，再上线本仓库的界面
+提示。`packages-workflows/update-index.yml` 是完整部署模板，应与 packages
+仓库保持同步。“我的应用”会把已被新版取代的合并 PR 视为历史记录，避免将
+自动清理后的旧版本误报为“索引更新中”。
+
+两条入口的主要差异是上传位置及提交身份：czdev 使用开发者 fork/PR 作者，
+网站使用官方 staging 和已登录的 Worker 身份（支持管理员操作）；首次发布
+审核、版本递增和更新后的分发清理规则相同。
+
 ## 本地开发
 
 ```bash

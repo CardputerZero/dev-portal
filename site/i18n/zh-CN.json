@@ -35,6 +35,7 @@
     "networkFailed": "网络中断，上传未完成",
     "aborted": "上传已取消",
     "submitOk": "✓ {message}\n审核进度：{actions}\n发布 PR：{track}",
+    "pending": "请等待 #{number} 合并或关闭，再刷新应用资料并提交。",
     "submitFailed": "提交失败：{msg}"
   },
   "preview": {

@@ -813,7 +813,7 @@ $("submit-btn").addEventListener("click", async () => {
       body,
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+    if (!r.ok) throw submissionError(data, r.status);
 
     // Drop the cached index/owners so "My packages" immediately shows this
     // submission (as a pending row) instead of a stale snapshot.
@@ -824,7 +824,7 @@ $("submit-btn").addEventListener("click", async () => {
       track: data.track_url,
     }));
   } catch (err) {
-    say("err", t("upload.submitFailed", { msg: err.message }));
+    showSubmissionError(err);
     $("submit-btn").disabled = false;
   }
 });
@@ -898,14 +898,14 @@ async function submitListing() {
     appendStoreFields(body);
     const r = await fetch("/api/listing", { method: "POST", body });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+    if (!r.ok) throw submissionError(data, r.status);
     say("ok", t("upload.submitOk", {
       message: data.message,
       actions: data.actions_url,
       track: data.track_url,
     }));
   } catch (err) {
-    say("err", t("upload.submitFailed", { msg: err.message }));
+    showSubmissionError(err);
     $("submit-btn").disabled = false;
   }
 }
@@ -917,8 +917,29 @@ async function postJson(path, obj) {
     body: JSON.stringify(obj),
   });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
+  if (!r.ok) throw submissionError(data, r.status);
   return data.ticket;
+}
+
+function submissionError(data, status) {
+  if (data.error === "submission_pending" && Number.isSafeInteger(data.number)) {
+    const err = new Error(t("upload.pending", { number: data.number }));
+    err.pending = data;
+    return err;
+  }
+  return new Error(data.detail || data.error || `HTTP ${status}`);
+}
+
+function showSubmissionError(err) {
+  say("err", err.pending ? err.message : t("upload.submitFailed", { msg: err.message }));
+  if (err.pending) {
+    const link = document.createElement("a");
+    link.href = err.pending.url;
+    link.textContent = `#${err.pending.number}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    $("status").append(" ", link);
+  }
 }
 
 /**

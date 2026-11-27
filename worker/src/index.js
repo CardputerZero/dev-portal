@@ -39,6 +39,7 @@
  */
 
 import { compareDebVersions, loginFromNoreply } from "../../site/debparse.js";
+import { pendingPortalPR } from "../../packages-workflows/pending-portal-pr.mjs";
 
 const SESSION_COOKIE = "cz_session";
 const STATE_COOKIE = "cz_oauth_state";
@@ -219,6 +220,8 @@ async function apiSubmitPrepare(request, env) {
 
   const blocked = await precheckOwnership(env, s, pkg, version);
   if (blocked) return blocked;
+  const pending = await precheckPending(env, pkg);
+  if (pending) return pending;
 
   return json(200, {
     ticket: await seal(env, {
@@ -262,8 +265,9 @@ async function apiSubmitDeb(request, env) {
   if (new TextDecoder().decode(bytes) !== "!<arch>\n") return json(400, { error: "not_a_deb" });
 
   const release = await ensureBufferRelease(env);
-  const assetName = `${s.l}__${canonicalName(ticket)}`;
-  await deleteAsset(env, release, assetName);
+  // Two uploads can start before either dispatch has opened a PR. Keep their
+  // bytes independent; pruning still matches the canonical suffix after "__".
+  const assetName = `${s.l}-${crypto.randomUUID()}__${canonicalName(ticket)}`;
 
   // FixedLengthStream gives the outgoing body a known length, which the GitHub
   // upload API requires — it rejects chunked transfer encoding. pipeTo must not
@@ -278,10 +282,8 @@ async function apiSubmitDeb(request, env) {
   if (!upload.ok) return json(502, { error: "upload_failed", detail: await safeText(upload) });
   const asset = await upload.json();
 
-  // The asset id rides along so finalize can discard the bytes if it ends up
-  // rejecting the submission.
   return json(200, {
-    ticket: await seal(env, { ...ticket, u: asset.browser_download_url, i: asset.id }),
+    ticket: await seal(env, { ...ticket, u: asset.browser_download_url }),
   });
 }
 
@@ -312,15 +314,12 @@ async function apiSubmitFinalize(request, env) {
   const hideEmail = form.get("hide_email") !== "false";
 
   // Re-check ownership: minutes can pass while the bytes upload, and the
-  // dispatch below cannot be undone. A rejection this late means the bytes are
-  // already in the staging release, so drop them rather than leave them behind
-  // (a submission abandoned before this step still leaks one asset, which the
-  // next upload of the same name overwrites).
+  // dispatch below cannot be undone. Staging pruning handles abandoned uploads;
+  // a repeated finalize must not remove bytes still referenced by an earlier PR.
   const blocked = await precheckOwnership(env, s, ticket.p, ticket.v);
-  if (blocked) {
-    if (ticket.i) await deleteAssetById(env, ticket.i).catch(() => { /* best effort */ });
-    return blocked;
-  }
+  if (blocked) return blocked;
+  const pending = await precheckPending(env, ticket.p);
+  if (pending) return pending;
 
   const release = await ensureBufferRelease(env);
 
@@ -383,6 +382,15 @@ async function apiSubmitFinalize(request, env) {
 
 function maxSizeMb(env) {
   return env.MAX_SIZE_MB || "80";
+}
+
+async function precheckPending(env, pkg) {
+  const repo = `${env.TARGET_OWNER}/${env.TARGET_REPO}`;
+  const number = await pendingPortalPR(repo, pkg, env.BOT_TOKEN);
+  if (!number) return null;
+  const url = `https://github.com/${repo}/pull/${number}`;
+  return json(409, { error: "submission_pending", number, url,
+    detail: `请等 #${number} 合并或关闭，再刷新应用资料并提交。 ${url}` });
 }
 
 function maxUploadBytes(env) {
@@ -506,6 +514,8 @@ async function apiListing(request, env) {
     });
   }
 
+  const pending = await precheckPending(env, pkg);
+  if (pending) return pending;
   const release = await ensureBufferRelease(env);
   let store;
   try {
@@ -707,15 +717,6 @@ async function ensureBufferRelease(env) {
   return created.json();
 }
 
-async function deleteAsset(env, release, name) {
-  const found = (release.assets || []).find((a) => a.name === name);
-  if (found) await deleteAssetById(env, found.id);
-}
-
-function deleteAssetById(env, id) {
-  return gh(env, `/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}/releases/assets/${id}`, { method: "DELETE" });
-}
-
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 // Read a PNG's pixel dimensions from its IHDR chunk without decoding it, or
@@ -729,7 +730,6 @@ function pngDims(bytes) {
 }
 
 async function uploadImageAsset(env, release, name, buf) {
-  await deleteAsset(env, release, name);
   const up = await fetch(
     `https://uploads.github.com/repos/${env.TARGET_OWNER}/${env.TARGET_REPO}` +
     `/releases/${release.id}/assets?name=${encodeURIComponent(name)}`,
@@ -786,6 +786,7 @@ async function collectStoreAssets(form, env, release, login, pkg) {
   if (permissions) payload.permissions = permissions;
 
   if (shots.length > 6) return { error: "too_many_screenshots", detail: "最多 6 张截图" };
+  const imagePrefix = `${login}__${pkg}__${crypto.randomUUID()}`;
   let idx = 0;
   for (const f of shots) {
     const b = await f.arrayBuffer();
@@ -795,7 +796,7 @@ async function collectStoreAssets(form, env, release, login, pkg) {
     if (d.w !== 320 || d.h !== 170) {
       return { error: "screenshot_bad_size", detail: `截图必须是 320×170（收到 ${d.w}×${d.h}）` };
     }
-    const up = await uploadImageAsset(env, release, `${login}__${pkg}__shot${idx}.png`, b);
+    const up = await uploadImageAsset(env, release, `${imagePrefix}-shot${idx}.png`, b);
     payload.screenshots.push({ name: `screenshot-${idx}.png`, url: up.url, sha256: up.sha256 });
     idx++;
   }
@@ -808,7 +809,7 @@ async function collectStoreAssets(form, env, release, login, pkg) {
     if (d.w !== d.h || d.w < 128 || d.w > 512) {
       return { error: "icon_bad_size", detail: "图标必须是正方形 PNG（128~512，推荐 256×256）" };
     }
-    const up = await uploadImageAsset(env, release, `${login}__${pkg}__icon.png`, b);
+    const up = await uploadImageAsset(env, release, `${imagePrefix}-icon.png`, b);
     payload.icon = { name: `${pkg}_icon.png`, url: up.url, sha256: up.sha256 };
   }
 

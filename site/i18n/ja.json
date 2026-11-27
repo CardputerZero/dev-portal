@@ -35,6 +35,7 @@
     "networkFailed": "アップロード完了前に接続が切断されました",
     "aborted": "アップロードをキャンセルしました",
     "submitOk": "✓ {message}\n審査の進捗：{actions}\n公開 PR：{track}",
+    "pending": "#{number} がマージまたはクローズされたら、アプリ情報を再読み込みして再送信してください。",
     "submitFailed": "送信に失敗しました：{msg}"
   },
   "preview": {

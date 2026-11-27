@@ -35,6 +35,7 @@
     "networkFailed": "Connection lost before the upload finished",
     "aborted": "Upload cancelled",
     "submitOk": "✓ {message}\nReview progress: {actions}\nPublish PR: {track}",
+    "pending": "Wait for #{number} to merge or close, then refresh the app details and submit again.",
     "submitFailed": "Submission failed: {msg}"
   },
   "preview": {
